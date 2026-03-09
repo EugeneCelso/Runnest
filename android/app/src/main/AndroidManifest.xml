@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Network -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- Location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+
+    <!-- Camera -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- Storage (legacy — Android 9 and below only) -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+
+    <!-- Foreground service — required for GPS tracking in background on Android 10+ -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+
+    <!-- Hardware features -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <uses-feature android:name="android.hardware.location.gps" android:required="true"/>
+
+    <application
+        android:label="RUNNEST"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!--
+            Foreground service declaration required for:
+            - Android 9+: FOREGROUND_SERVICE permission
+            - Android 10+: foregroundServiceType="location"
+            - Android 14+: FOREGROUND_SERVICE_LOCATION permission
+            Without this, GPS tracking stops when the app goes to background.
+        -->
+        <service
+            android:name="com.transistorsoft.flutter.backgroundgeolocation.HeadlessTask"
+            android:exported="false"
+            android:foregroundServiceType="location"
+            android:stopWithTask="true"/>
+
+        <!--
+            Geolocator plugin's own service for continuous GPS.
+            foregroundServiceType="location" is required on Android 10+.
+        -->
+        <service
+            android:name="com.baseflow.geolocator.service.PositionStreamService"
+            android:exported="false"
+            android:foregroundServiceType="location"
+            android:stopWithTask="true"/>
+
+        <meta-data android:name="flutterEmbedding" android:value="2"/>
+
+    </application>
+
+</manifest>

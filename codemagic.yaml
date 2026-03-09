@@ -1,0 +1,29 @@
+
+workflows:
+  ios-free-build-optimized:
+    name: iOS Unsigned (Clean Version)
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      groups:
+        - magic_vars # Optional: Store app names here
+    scripts:
+      - name: Initialize
+        script: flutter packages pub get
+      - name: Build & Package
+        script: |
+          # 1. Build the app bundle
+          flutter build ios --release --no-codesign
+
+          # 2. Set up variables to avoid hardcoding "Runner"
+          APP_NAME=$(find build/ios/iphoneos -name "*.app" | head -n 1)
+
+          # 3. Create IPA structure
+          mkdir -p build/ios/iphoneos/Payload
+          cp -r "$APP_NAME" build/ios/iphoneos/Payload/
+
+          # 4. Zip it up
+          cd build/ios/iphoneos && zip -r unsigned_app.ipa Payload
+    artifacts:
+      - build/ios/iphoneos/unsigned_app.ipa

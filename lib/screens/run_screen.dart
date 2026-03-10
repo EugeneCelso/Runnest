@@ -26,6 +26,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   CameraController? _cam;
   List<CameraDescription> _cameras = [];
   bool _camVisible = false;
+  bool _camExpanded = false; // NEW: fullscreen/expanded camera mode
   bool _savingPhoto = false;
   bool _isFrontCam = false;
   bool _camSwitching = false;
@@ -38,10 +39,6 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
 
   bool _isRunning = false;
   bool _isPaused = false;
-
-  // FIX: _ready is now only set to true when we receive a filtered fix
-  // with good accuracy (≤15m) from the stream — NOT from getCurrent().
-  // This prevents the map from seeding at a noisy raw position.
   bool _ready = false;
 
   late RunSession _session;
@@ -66,6 +63,10 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   late AnimationController _fadeCtrl;
   late Animation<double> _fadeAnim;
 
+  // Camera expand animation
+  late AnimationController _camExpandCtrl;
+  late Animation<double> _camExpandAnim;
+
   @override
   void initState() {
     super.initState();
@@ -82,6 +83,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeIn);
     _fadeCtrl.forward();
 
+    _camExpandCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 280));
+    _camExpandAnim =
+        CurvedAnimation(parent: _camExpandCtrl, curve: Curves.easeInOut);
+
     _init();
   }
 
@@ -91,51 +97,26 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       _snack('Location permission required');
       return;
     }
-
     _initCam();
-
-    // FIX: Do NOT call getCurrent() here. That raw unfiltered position was
-    // the primary cause of the initial GPS jump — it bypasses the Kalman
-    // filter, accuracy gate, and warmup logic entirely, and seeds the map
-    // (and _lastRecordedPos) with a potentially 50m+ inaccurate fix.
-    //
-    // Instead, start the filtered stream immediately and wait for the first
-    // good fix to arrive via _onPreviewPosition (which now has its own
-    // accuracy guard before setting _ready = true).
     _loc.start(resetKalman: true);
     _locSub = _loc.rawStream.listen(_onPreviewPosition);
   }
 
   void _onPreviewPosition(Position pos) {
     if (!mounted) return;
-
     final ll = LatLng(pos.latitude, pos.longitude);
-
-    // FIX: only accept the very first fix (to mark _ready and seed the map)
-    // if it meets a strict accuracy threshold. This prevents a noisy early
-    // fix from becoming the anchor point for distance calculations.
     if (!_ready && pos.accuracy > 15.0) return;
-
     setState(() {
       _gpsAccuracy = pos.accuracy;
       _currentSpeedMs = pos.speed;
       _currentLatLng = ll;
-
       if (!_ready) {
-        // This is the first good filtered fix — safe to use as seed
         _lastRecordedPos = pos;
         _ready = true;
-        try {
-          _mapCtrl.move(ll, 17.5);
-        } catch (_) {}
+        try { _mapCtrl.move(ll, 17.5); } catch (_) {}
       } else {
-        try {
-          _mapCtrl.move(ll, _mapCtrl.camera.zoom);
-        } catch (_) {}
+        try { _mapCtrl.move(ll, _mapCtrl.camera.zoom); } catch (_) {}
       }
-
-      // Keep _lastRecordedPos updated during preview so _startRun()
-      // has the freshest possible seed position
       _lastRecordedPos = pos;
     });
   }
@@ -152,55 +133,24 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   Future<void> _setupCamera(int index) async {
     if (_camSetupInProgress) return;
     _camSetupInProgress = true;
-
     final oldCam = _cam;
-
     try {
-      if (mounted) {
-        setState(() {
-          _cam = null;
-          _camSwitching = true;
-        });
-      }
-
+      if (mounted) setState(() { _cam = null; _camSwitching = true; });
       if (oldCam != null) {
-        try {
-          await oldCam.dispose();
-        } catch (e) {
-          debugPrint('Old cam dispose error: $e');
-        }
+        try { await oldCam.dispose(); } catch (e) { debugPrint('Old cam dispose error: $e'); }
       }
-
       await Future.delayed(const Duration(milliseconds: 300));
-
       if (!mounted) return;
-
       final controller = CameraController(
-        _cameras[index],
-        ResolutionPreset.high,
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        _cameras[index], ResolutionPreset.high,
+        enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg,
       );
-
       await controller.initialize();
-
-      if (!mounted) {
-        await controller.dispose();
-        return;
-      }
-
-      setState(() {
-        _cam = controller;
-        _camSwitching = false;
-      });
+      if (!mounted) { await controller.dispose(); return; }
+      setState(() { _cam = controller; _camSwitching = false; });
     } catch (e) {
       debugPrint('Camera setup error: $e');
-      if (mounted) {
-        setState(() {
-          _cam = null;
-          _camSwitching = false;
-        });
-      }
+      if (mounted) setState(() { _cam = null; _camSwitching = false; });
     } finally {
       _camSetupInProgress = false;
     }
@@ -208,88 +158,52 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
 
   Future<void> _flipCamera() async {
     if (_cameras.length < 2 || _camSetupInProgress || _camSwitching) return;
-
     final targetDirection =
     _isFrontCam ? CameraLensDirection.back : CameraLensDirection.front;
-
-    final camIndex =
-    _cameras.indexWhere((c) => c.lensDirection == targetDirection);
-
-    if (camIndex == -1) {
-      _snack('Camera not found');
-      return;
-    }
-
+    final camIndex = _cameras.indexWhere((c) => c.lensDirection == targetDirection);
+    if (camIndex == -1) { _snack('Camera not found'); return; }
     _isFrontCam = !_isFrontCam;
     await _setupCamera(camIndex);
   }
 
   void _startRun() {
     if (!_ready) return;
-
     _locSub?.cancel();
-
-    // FIX: use the last filtered position from the stream as the seed —
-    // this is already Kalman-smoothed and accuracy-gated, so it won't jump.
-    // Fall back to _currentLatLng only if lastPosition is somehow null.
     final seedPos = _loc.lastPosition ?? _lastRecordedPos;
-    final seedLatLng = seedPos != null
-        ? LatLng(seedPos.latitude, seedPos.longitude)
-        : _currentLatLng;
-
     setState(() {
       _isRunning = true;
       _isPaused = false;
       _distanceMeters = 0;
       _elapsedSeconds = 0;
       _polylinePoints.clear();
-      // FIX: do NOT add seedLatLng to the polyline here. Adding it
-      // immediately creates a segment from seed → first tracking fix,
-      // which can be a visible jump if the first fix lands somewhere
-      // different. Let _onTrackingPosition add the first point instead.
       _lastRecordedPos = seedPos;
       _lastRecordedTime = DateTime.now();
     });
-
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_isPaused && _isRunning && mounted) {
-        setState(() => _elapsedSeconds++);
-      }
+      if (!_isPaused && _isRunning && mounted) setState(() => _elapsedSeconds++);
     });
-
     _locSub = _loc.rawStream.listen(_onTrackingPosition);
   }
 
   void _onTrackingPosition(Position pos) {
     if (!mounted) return;
-
     final ll = LatLng(pos.latitude, pos.longitude);
     setState(() {
       _gpsAccuracy = pos.accuracy;
       _currentSpeedMs = pos.speed;
       _currentLatLng = ll;
     });
-
     if (_isRunning && !_isPaused) {
-      try {
-        _mapCtrl.move(ll, _mapCtrl.camera.zoom);
-      } catch (_) {}
+      try { _mapCtrl.move(ll, _mapCtrl.camera.zoom); } catch (_) {}
     }
-
     if (_isPaused || !_isRunning) return;
-
     final speedOk = pos.speed > 0.5;
     if (_loc.isStationary && !speedOk) return;
-
     final now = DateTime.now();
     if (_lastRecordedTime != null) {
-      final msSinceLast = now.difference(_lastRecordedTime!).inMilliseconds;
-      if (msSinceLast < _minRecordIntervalMs) return;
+      if (now.difference(_lastRecordedTime!).inMilliseconds < _minRecordIntervalMs) return;
     }
-
     if (_lastRecordedPos == null) {
-      // FIX: first tracking position — add to polyline and record it,
-      // but do NOT count any distance yet (no previous point to diff from).
       setState(() {
         _lastRecordedPos = pos;
         _lastRecordedTime = now;
@@ -297,16 +211,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       });
       return;
     }
-
     final meters = _loc.metersBetween(_lastRecordedPos!, pos);
     if (meters >= _minRecordDistMeters) {
       setState(() {
-        // FIX: add the start point on the very first segment so the
-        // polyline has a clean origin at the true run-start position.
         if (_polylinePoints.isEmpty) {
-          final startLl = LatLng(
-              _lastRecordedPos!.latitude, _lastRecordedPos!.longitude);
-          _polylinePoints.add(startLl);
+          _polylinePoints.add(LatLng(_lastRecordedPos!.latitude, _lastRecordedPos!.longitude));
         }
         _distanceMeters += meters;
         _polylinePoints.add(ll);
@@ -338,8 +247,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   void _syncSession() {
     _session.distanceKm = _distanceKm;
     _session.elapsed = Duration(seconds: _elapsedSeconds);
-    _session.pacePerKm =
-    _distanceKm > 0 ? _elapsedSeconds / _distanceKm : 0;
+    _session.pacePerKm = _distanceKm > 0 ? _elapsedSeconds / _distanceKm : 0;
     _session.routePoints = List.from(_polylinePoints);
   }
 
@@ -353,6 +261,9 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       if (overlayPath != null && mounted) {
         _session.photoPath = overlayPath;
         _snack('📸 Photo saved!');
+        // Collapse camera after taking photo
+        setState(() { _camVisible = false; _camExpanded = false; });
+        _camExpandCtrl.reverse();
       }
     } catch (e) {
       _snack('Camera error — please retry');
@@ -360,6 +271,82 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     } finally {
       if (mounted) setState(() => _savingPhoto = false);
     }
+  }
+
+  void _toggleCamExpand() {
+    setState(() => _camExpanded = !_camExpanded);
+    if (_camExpanded) {
+      _camExpandCtrl.forward();
+    } else {
+      _camExpandCtrl.reverse();
+    }
+  }
+
+  // ---- Post-run photo prompt then stop ----
+  Future<void> _showStop() async {
+    // Step 1: confirm finish
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Finish Run?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: const Text('Your run will be saved.',
+            style: TextStyle(color: Colors.white54)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white38))),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Finish',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    // Step 2: if no photo yet and camera is available, offer to take one
+    if (_session.photoPath == null && _camReady && mounted) {
+      final takePhoto = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Text('Save a photo?',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          content: const Text(
+            "You haven't taken a run photo yet.\nCapture this moment with your stats overlay?",
+            style: TextStyle(color: Colors.white54),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Skip', style: TextStyle(color: Colors.white38)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Take Photo',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+
+      if (takePhoto == true && mounted) {
+        // Open camera expanded so user can take the shot, then finish
+        setState(() { _camVisible = true; _camExpanded = true; });
+        _camExpandCtrl.forward();
+        // Show a small reminder snack
+        _snack('Take your photo, then tap ✓ Finish Run');
+        return; // Wait — user will finish via the "Finish Run" shortcut button
+      }
+    }
+
+    await _stopRun();
   }
 
   Future<void> _stopRun() async {
@@ -394,12 +381,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     _uiTimer?.cancel();
     _locSub?.cancel();
     _loc.dispose();
-    try {
-      _mapCtrl.dispose();
-    } catch (_) {}
+    try { _mapCtrl.dispose(); } catch (_) {}
     if (!_camTransferred) _cam?.dispose();
     _pulseCtrl.dispose();
     _fadeCtrl.dispose();
+    _camExpandCtrl.dispose();
     super.dispose();
   }
 
@@ -414,8 +400,43 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           _buildTopGradient(),
           _buildTopBar(),
           if (_camVisible) _buildCamOverlay(),
-          Positioned(bottom: 0, left: 0, right: 0, child: _buildPanel()),
+          // "Finish Run" floating button visible when camera is expanded
+          if (_camExpanded && _isRunning) _buildFinishRunFab(),
+          Positioned(
+            bottom: 0, left: 0, right: 0,
+            child: _camExpanded ? const SizedBox.shrink() : _buildPanel(),
+          ),
         ]),
+      ),
+    );
+  }
+
+  // Floating "Finish Run" button shown when camera is expanded
+  Widget _buildFinishRunFab() {
+    return Positioned(
+      bottom: MediaQuery.of(context).padding.bottom + 24,
+      left: 24,
+      right: 24,
+      child: GestureDetector(
+        onTap: _stopRun,
+        child: Container(
+          height: 54,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(27),
+            boxShadow: [
+              BoxShadow(color: Colors.white.withOpacity(0.2), blurRadius: 20),
+            ],
+          ),
+          child: const Center(
+            child: Text('✓  Finish Run',
+                style: TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    letterSpacing: 1.5)),
+          ),
+        ),
       ),
     );
   }
@@ -430,10 +451,8 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
             SizedBox(height: 24),
             Text('Acquiring GPS signal...',
                 style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 15,
-                    letterSpacing: 0.8,
-                    fontWeight: FontWeight.w400)),
+                    color: Colors.white54, fontSize: 15,
+                    letterSpacing: 0.8, fontWeight: FontWeight.w400)),
             SizedBox(height: 6),
             Text('Move outside for best accuracy',
                 style: TextStyle(color: Colors.white24, fontSize: 12)),
@@ -447,13 +466,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       options: MapOptions(
         initialCenter: _currentLatLng!,
         initialZoom: 17.5,
-        interactionOptions:
-        const InteractionOptions(flags: InteractiveFlag.all),
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
       ),
       children: [
         TileLayer(
-          urlTemplate:
-          'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+          urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
           subdomains: const ['a', 'b', 'c', 'd'],
           userAgentPackageName: 'com.example.runnest',
           retinaMode: MediaQuery.of(context).devicePixelRatio > 1.0,
@@ -464,36 +481,29 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
               points: List<LatLng>.from(_polylinePoints),
               color: Colors.black.withOpacity(0.5),
               strokeWidth: 12.0,
-              strokeCap: StrokeCap.round,
-              strokeJoin: StrokeJoin.round,
+              strokeCap: StrokeCap.round, strokeJoin: StrokeJoin.round,
             ),
             Polyline(
               points: List<LatLng>.from(_polylinePoints),
               color: Colors.white,
               strokeWidth: 5.0,
-              strokeCap: StrokeCap.round,
-              strokeJoin: StrokeJoin.round,
+              strokeCap: StrokeCap.round, strokeJoin: StrokeJoin.round,
             ),
           ]),
         MarkerLayer(markers: [
           if (_polylinePoints.isNotEmpty)
             Marker(
-              point: _polylinePoints.first,
-              width: 16,
-              height: 16,
+              point: _polylinePoints.first, width: 16, height: 16,
               child: Container(
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white,
+                  shape: BoxShape.circle, color: Colors.white,
                   border: Border.all(color: Colors.black54, width: 2),
                 ),
               ),
             ),
           if (_currentLatLng != null)
             Marker(
-              point: _currentLatLng!,
-              width: 36,
-              height: 36,
+              point: _currentLatLng!, width: 36, height: 36,
               child: AnimatedBuilder(
                 animation: _pulseAnim,
                 builder: (_, __) => Transform.scale(
@@ -504,11 +514,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                       color: _isPaused ? Colors.grey.shade400 : Colors.white,
                       border: Border.all(color: Colors.black54, width: 3),
                       boxShadow: [
-                        BoxShadow(
-                          color: Colors.white.withOpacity(0.6),
-                          blurRadius: 16,
-                          spreadRadius: 3,
-                        ),
+                        BoxShadow(color: Colors.white.withOpacity(0.6), blurRadius: 16, spreadRadius: 3),
                       ],
                     ),
                   ),
@@ -521,15 +527,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildTopGradient() => Positioned(
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 120,
+    top: 0, left: 0, right: 0, height: 120,
     child: Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
           colors: [Colors.black, Colors.transparent],
         ),
       ),
@@ -537,63 +539,52 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   );
 
   Widget _buildTopBar() => Positioned(
-    top: 0,
-    left: 0,
-    right: 0,
+    top: 0, left: 0, right: 0,
     child: SafeArea(
       child: Padding(
-        padding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _topBtn(Icons.arrow_back_ios_new, false,
-                      () => _isRunning
-                      ? _showExit()
-                      : Navigator.pop(context)),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          _topBtn(Icons.arrow_back_ios_new, false,
+                  () => _isRunning ? _showExit() : Navigator.pop(context)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.6),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: const Text('RUNNE\$T',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w900,
+                    fontSize: 14, letterSpacing: 2)),
+          ),
+          Row(children: [
+            if (_isRunning)
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 7),
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.6),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.white12),
                 ),
-                child: const Text('RUNNE\$T',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        letterSpacing: 2)),
+                child: Text(
+                  '${(_currentSpeedMs * 3.6).toStringAsFixed(1)} km/h',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
               ),
-              Row(children: [
-                if (_isRunning)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white12),
-                    ),
-                    child: Text(
-                      '${(_currentSpeedMs * 3.6).toStringAsFixed(1)} km/h',
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 11),
-                    ),
-                  ),
-                _topBtn(Icons.camera_alt_outlined, _camVisible, () {
-                  if (_camReady) {
-                    setState(() => _camVisible = !_camVisible);
-                  } else if (_camSetupInProgress || _camSwitching) {
-                    _snack('Camera is loading...');
-                  } else {
-                    _snack('Camera unavailable');
-                  }
-                }),
-              ]),
-            ]),
+            _topBtn(Icons.camera_alt_outlined, _camVisible, () {
+              if (_camReady) {
+                setState(() { _camVisible = !_camVisible; });
+                if (!_camVisible) { _camExpanded = false; _camExpandCtrl.reverse(); }
+              } else if (_camSetupInProgress || _camSwitching) {
+                _snack('Camera is loading...');
+              } else {
+                _snack('Camera unavailable');
+              }
+            }),
+          ]),
+        ]),
       ),
     ),
   );
@@ -602,170 +593,192 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 42,
-          height: 42,
+          width: 42, height: 42,
           decoration: BoxDecoration(
             color: active ? Colors.white : Colors.black.withOpacity(0.65),
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white24),
           ),
-          child: Icon(icon,
-              color: active ? Colors.black : Colors.white, size: 18),
+          child: Icon(icon, color: active ? Colors.black : Colors.white, size: 18),
         ),
       );
 
+  // ---- Expandable camera overlay ----
   Widget _buildCamOverlay() {
-    const double camW = 200.0;
-    const double camH = 266.0;
+    final screen = MediaQuery.of(context).size;
+    final topPad = MediaQuery.of(context).padding.top;
 
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + 70,
-      right: 12,
-      child: Container(
-        width: camW,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white30, width: 1.5),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.7), blurRadius: 20)
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(19),
-          child: Stack(children: [
-            if (_camSwitching || !_camReady)
-              Container(
-                width: camW,
-                height: camH,
-                color: Colors.black,
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(
-                          color: Colors.white54, strokeWidth: 1.5),
-                      const SizedBox(height: 10),
-                      Text(
-                        _camSwitching ? 'Switching...' : 'Loading...',
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 12),
+    // Small pip
+    const double smallW = 200.0;
+    const double smallH = 266.0;
+    const double smallRight = 12.0;
+    final double smallTop = topPad + 70;
+
+    // Expanded
+    final double bigW = screen.width - 32;
+    final double bigH = screen.height * 0.68;
+    const double bigRight = 16.0;
+    final double bigTop = topPad + 56;
+
+    return AnimatedBuilder(
+      animation: _camExpandAnim,
+      builder: (context, _) {
+        final t = _camExpandAnim.value;
+        final w = smallW + (bigW - smallW) * t;
+        final h = smallH + (bigH - smallH) * t;
+        final right = smallRight + (bigRight - smallRight) * t;
+        final top = smallTop + (bigTop - smallTop) * t;
+        final radius = 20.0 - 4.0 * t;
+
+        return Positioned(
+          top: top,
+          right: right,
+          child: Container(
+            width: w, height: h,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(color: Colors.white30, width: 1.5),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.7), blurRadius: 20)],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(radius - 1),
+              child: Stack(children: [
+                // Preview
+                if (_camSwitching || !_camReady)
+                  Container(
+                    width: w, height: h, color: Colors.black,
+                    child: Center(
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        const CircularProgressIndicator(color: Colors.white54, strokeWidth: 1.5),
+                        const SizedBox(height: 10),
+                        Text(
+                          _camSwitching ? 'Switching...' : 'Loading...',
+                          style: const TextStyle(color: Colors.white38, fontSize: 12),
+                        ),
+                      ]),
+                    ),
+                  )
+                else
+                  KeyedSubtree(
+                    key: ValueKey(_cam),
+                    child: GestureDetector(
+                      // Tap preview (small mode) to expand
+                      onTap: !_camExpanded ? _toggleCamExpand : null,
+                      child: SizedBox(width: w, height: h, child: CameraPreview(_cam!)),
+                    ),
+                  ),
+
+                // "Tap to expand" hint badge (small mode only)
+                if (!_camExpanded && _camReady && t < 0.1)
+                  Positioned(
+                    top: 8, left: 0, right: 0,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text('Tap to expand',
+                            style: TextStyle(color: Colors.white60, fontSize: 9, letterSpacing: 0.4)),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              )
-            else
-              KeyedSubtree(
-                key: ValueKey(_cam),
-                child: SizedBox(
-                  width: camW,
-                  height: camH,
-                  child: CameraPreview(_cam!),
-                ),
-              ),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 10),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.88),
-                      Colors.transparent
-                    ],
-                  ),
-                ),
-                child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
+
+                // Bottom controls
+                Positioned(
+                  bottom: 0, left: 0, right: 0,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: _camExpanded ? 20 : 10),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter, end: Alignment.topCenter,
+                        colors: [Colors.black.withOpacity(0.88), Colors.transparent],
+                      ),
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
                       _camBtn(
                         Icons.flip_camera_ios_outlined,
-                        (_camSwitching || _camSetupInProgress)
-                            ? null
-                            : _flipCamera,
+                        (_camSwitching || _camSetupInProgress) ? null : _flipCamera,
+                        size: _camExpanded ? 48 : 36,
                       ),
+                      // Shutter
                       GestureDetector(
                         onTap: _camReady ? _takePhoto : null,
                         child: Container(
-                          width: 52,
-                          height: 52,
+                          width: _camExpanded ? 72 : 52,
+                          height: _camExpanded ? 72 : 52,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: (_savingPhoto || !_camReady)
-                                ? Colors.grey.shade600
-                                : Colors.white,
-                            border: Border.all(
-                                color: Colors.black38, width: 2.5),
+                            color: (_savingPhoto || !_camReady) ? Colors.grey.shade600 : Colors.white,
+                            border: Border.all(color: Colors.black38, width: 2.5),
                           ),
                           child: _savingPhoto
-                              ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.black))
-                              : const Icon(Icons.camera_alt,
-                              color: Colors.black, size: 26),
+                              ? Padding(
+                              padding: EdgeInsets.all(_camExpanded ? 16 : 12),
+                              child: const CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                              : Icon(Icons.camera_alt, color: Colors.black, size: _camExpanded ? 34 : 26),
                         ),
                       ),
-                      _camBtn(Icons.close,
-                              () => setState(() => _camVisible = false)),
+                      // Collapse or close
+                      _camBtn(
+                        _camExpanded ? Icons.fullscreen_exit : Icons.close,
+                        _camExpanded
+                            ? _toggleCamExpand
+                            : () {
+                          setState(() { _camVisible = false; _camExpanded = false; });
+                          _camExpandCtrl.reverse();
+                        },
+                        size: _camExpanded ? 48 : 36,
+                      ),
                     ]),
-              ),
+                  ),
+                ),
+              ]),
             ),
-          ]),
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _camBtn(IconData icon, VoidCallback? onTap) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: onTap == null
-            ? Colors.white.withOpacity(0.08)
-            : Colors.white.withOpacity(0.22),
-      ),
-      child: Icon(icon,
-          color: onTap == null ? Colors.white30 : Colors.white,
-          size: 18),
-    ),
-  );
+  Widget _camBtn(IconData icon, VoidCallback? onTap, {double size = 36}) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: size, height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: onTap == null
+                ? Colors.white.withOpacity(0.08)
+                : Colors.white.withOpacity(0.22),
+          ),
+          child: Icon(icon,
+              color: onTap == null ? Colors.white30 : Colors.white,
+              size: size * 0.5),
+        ),
+      );
 
   Widget _buildPanel() => Container(
     decoration: BoxDecoration(
       gradient: LinearGradient(
-        begin: Alignment.bottomCenter,
-        end: Alignment.topCenter,
+        begin: Alignment.bottomCenter, end: Alignment.topCenter,
         colors: [
-          Colors.black,
-          Colors.black.withOpacity(0.98),
-          Colors.black.withOpacity(0.92),
-          Colors.transparent,
+          Colors.black, Colors.black.withOpacity(0.98),
+          Colors.black.withOpacity(0.92), Colors.transparent,
         ],
         stops: const [0, 0.6, 0.8, 1],
       ),
     ),
     padding: EdgeInsets.only(
-      left: 24,
-      right: 24,
+      left: 24, right: 24,
       bottom: MediaQuery.of(context).padding.bottom + 28,
       top: 36,
     ),
     child: Column(mainAxisSize: MainAxisSize.min, children: [
       Container(
         margin: const EdgeInsets.only(bottom: 16),
-        padding:
-        const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.07),
           borderRadius: BorderRadius.circular(20),
@@ -773,15 +786,12 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 6, height: 6,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: _gpsAccuracy <= 8
                   ? Colors.white
-                  : _gpsAccuracy <= 20
-                  ? Colors.grey.shade400
-                  : Colors.grey.shade600,
+                  : _gpsAccuracy <= 20 ? Colors.grey.shade400 : Colors.grey.shade600,
             ),
           ),
           const SizedBox(width: 6),
@@ -791,26 +801,19 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                 '${_isPaused ? '  •  PAUSED' : _loc.isStationary && _isRunning ? '  •  STILL' : ''}'
                 : 'Searching for GPS...',
             style: TextStyle(
-              color: _isPaused
-                  ? Colors.grey.shade400
-                  : Colors.white38,
-              fontSize: 10,
-              letterSpacing: 0.8,
-              fontWeight: _isPaused
-                  ? FontWeight.w600
-                  : FontWeight.normal,
+              color: _isPaused ? Colors.grey.shade400 : Colors.white38,
+              fontSize: 10, letterSpacing: 0.8,
+              fontWeight: _isPaused ? FontWeight.w600 : FontWeight.normal,
             ),
           ),
         ]),
       ),
       Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 20, vertical: 18),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.05),
           borderRadius: BorderRadius.circular(20),
-          border:
-          Border.all(color: Colors.white.withOpacity(0.08)),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
         ),
         child: Row(children: [
           _statWidget('DISTANCE', '$_displayDistance', 'km'),
@@ -826,35 +829,25 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       else
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           _ctrlBtn(
-            icon: _isPaused
-                ? Icons.play_arrow_rounded
-                : Icons.pause_rounded,
+            icon: _isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
             onTap: () => setState(() => _isPaused = !_isPaused),
-            size: 56,
-            filled: false,
+            size: 56, filled: false,
           ),
           const SizedBox(width: 20),
-          _ctrlBtn(
-            icon: Icons.stop_rounded,
-            onTap: _showStop,
-            size: 72,
-            filled: true,
-          ),
+          _ctrlBtn(icon: Icons.stop_rounded, onTap: _showStop, size: 72, filled: true),
           const SizedBox(width: 20),
           _ctrlBtn(
             icon: Icons.camera_alt_outlined,
             onTap: () {
               if (_camReady) {
-                setState(() => _camVisible = !_camVisible);
+                setState(() { _camVisible = !_camVisible; });
+                if (!_camVisible) { _camExpanded = false; _camExpandCtrl.reverse(); }
               } else {
                 _snack((_camSetupInProgress || _camSwitching)
-                    ? 'Camera is loading...'
-                    : 'Camera unavailable');
+                    ? 'Camera is loading...' : 'Camera unavailable');
               }
             },
-            size: 56,
-            filled: false,
-            active: _camVisible,
+            size: 56, filled: false, active: _camVisible,
           ),
         ]),
     ]),
@@ -864,30 +857,23 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     child: Column(children: [
       Text(label,
           style: const TextStyle(
-              color: Colors.white38,
-              fontSize: 9,
-              letterSpacing: 1.4,
-              fontWeight: FontWeight.w600)),
+              color: Colors.white38, fontSize: 9,
+              letterSpacing: 1.4, fontWeight: FontWeight.w600)),
       const SizedBox(height: 6),
       FittedBox(
         fit: BoxFit.scaleDown,
         child: Text(value,
             style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.5)),
+                color: Colors.white, fontSize: 24,
+                fontWeight: FontWeight.w800, letterSpacing: -0.5)),
       ),
       if (unit.isNotEmpty)
-        Text(unit,
-            style:
-            const TextStyle(color: Colors.white38, fontSize: 10)),
+        Text(unit, style: const TextStyle(color: Colors.white38, fontSize: 10)),
     ]),
   );
 
   Widget _vDivider() => Container(
-    width: 1,
-    height: 40,
+    width: 1, height: 40,
     color: Colors.white12,
     margin: const EdgeInsets.symmetric(horizontal: 4),
   );
@@ -896,27 +882,17 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     onTap: _ready ? _startRun : null,
     child: AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      width: double.infinity,
-      height: 62,
+      width: double.infinity, height: 62,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(31),
         gradient: _ready
             ? const LinearGradient(
           colors: [Colors.white, Color(0xFFBBBBBB)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
         )
-            : LinearGradient(colors: [
-          Colors.grey.shade800,
-          Colors.grey.shade700
-        ]),
+            : LinearGradient(colors: [Colors.grey.shade800, Colors.grey.shade700]),
         boxShadow: _ready
-            ? [
-          BoxShadow(
-              color: Colors.white.withOpacity(0.25),
-              blurRadius: 24,
-              spreadRadius: 2)
-        ]
+            ? [BoxShadow(color: Colors.white.withOpacity(0.25), blurRadius: 24, spreadRadius: 2)]
             : [],
       ),
       child: Center(
@@ -924,9 +900,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           _ready ? 'START RUN' : 'GETTING GPS...',
           style: TextStyle(
             color: _ready ? Colors.black : Colors.grey.shade500,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
-            letterSpacing: 3,
+            fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 3,
           ),
         ),
       ),
@@ -943,8 +917,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       GestureDetector(
         onTap: onTap,
         child: Container(
-          width: size,
-          height: size,
+          width: size, height: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: filled
@@ -952,64 +925,32 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                 : active
                 ? Colors.white.withOpacity(0.2)
                 : Colors.white.withOpacity(0.08),
-            border: Border.all(
-                color: Colors.white.withOpacity(filled ? 0 : 0.2)),
+            border: Border.all(color: Colors.white.withOpacity(filled ? 0 : 0.2)),
           ),
-          child: Icon(icon,
-              color: filled ? Colors.black : Colors.white,
-              size: size * 0.44),
+          child: Icon(icon, color: filled ? Colors.black : Colors.white, size: size * 0.44),
         ),
       );
-
-  Future<void> _showStop() async {
-    await showDialog(
-        context: context,
-        builder: (_) => _dialog(
-            'Finish Run?', 'Your run will be saved.', 'Finish', _stopRun));
-  }
 
   Future<void> _showExit() async {
     await showDialog(
         context: context,
-        builder: (_) => _dialog(
-            'Leave?', 'This run will not be saved.', 'Leave', () {
-          Navigator.pop(context);
-          Navigator.pop(context);
-        }, danger: true));
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Text('Leave?',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          content: const Text('This run will not be saved.',
+              style: TextStyle(color: Colors.white54)),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white38))),
+            TextButton(
+              onPressed: () { Navigator.pop(context); Navigator.pop(context); },
+              child: const Text('Leave',
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ));
   }
-
-  Widget _dialog(
-      String title,
-      String body,
-      String confirm,
-      VoidCallback onConfirm, {
-        bool danger = false,
-      }) =>
-      AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24)),
-        title: Text(title,
-            style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold)),
-        content:
-        Text(body, style: const TextStyle(color: Colors.white54)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel',
-                  style: TextStyle(color: Colors.white38))),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              onConfirm();
-            },
-            child: Text(confirm,
-                style: TextStyle(
-                  color: danger ? Colors.redAccent : Colors.white,
-                  fontWeight: FontWeight.bold,
-                )),
-          ),
-        ],
-      );
 }

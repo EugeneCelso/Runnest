@@ -73,28 +73,20 @@ class RunDetailScreen extends StatelessWidget {
                 MarkerLayer(markers: [
                   if (s.routePoints.isNotEmpty) ...[
                     Marker(
-                      point: s.routePoints.first,
-                      width: 18,
-                      height: 18,
+                      point: s.routePoints.first, width: 18, height: 18,
                       child: Container(
                         decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                          border: Border.all(
-                              color: Colors.black54, width: 2),
+                          shape: BoxShape.circle, color: Colors.white,
+                          border: Border.all(color: Colors.black54, width: 2),
                         ),
                       ),
                     ),
                     Marker(
-                      point: s.routePoints.last,
-                      width: 18,
-                      height: 18,
+                      point: s.routePoints.last, width: 18, height: 18,
                       child: Container(
                         decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.grey.shade400,
-                          border: Border.all(
-                              color: Colors.black54, width: 2),
+                          shape: BoxShape.circle, color: Colors.grey.shade400,
+                          border: Border.all(color: Colors.black54, width: 2),
                         ),
                       ),
                     ),
@@ -126,7 +118,7 @@ class RunDetailScreen extends StatelessWidget {
                         fontWeight: FontWeight.w800)),
                 const SizedBox(height: 24),
 
-                // Primary stats
+                // Primary stats: Distance / Time / Pace
                 Container(
                   padding: const EdgeInsets.symmetric(
                       vertical: 20, horizontal: 8),
@@ -146,7 +138,7 @@ class RunDetailScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // Secondary grid
+                // Secondary grid — now 6 cards with steps + cadence
                 GridView.count(
                   crossAxisCount: 2,
                   shrinkWrap: true,
@@ -159,9 +151,14 @@ class RunDetailScreen extends StatelessWidget {
                         Icons.local_fire_department_outlined),
                     _miniCard('Avg Speed', _avgSpeed(s),
                         Icons.speed_outlined),
+                    _miniCard('Steps',
+                        s.steps > 0 ? s.formattedSteps : '--',
+                        Icons.directions_walk_outlined),
+                    _miniCard('Cadence', _cadence(s),
+                        Icons.av_timer_outlined),
                     _miniCard('Duration', s.formattedTime,
                         Icons.timer_outlined),
-                    _miniCard('Points', '${s.routePoints.length}',
+                    _miniCard('GPS Points', '${s.routePoints.length}',
                         Icons.location_on_outlined),
                   ],
                 ),
@@ -179,18 +176,15 @@ class RunDetailScreen extends StatelessWidget {
                     _legendDot(Colors.white),
                     const SizedBox(width: 8),
                     const Text('Start',
-                        style: TextStyle(
-                            color: Colors.white54, fontSize: 13)),
+                        style: TextStyle(color: Colors.white54, fontSize: 13)),
                     const SizedBox(width: 24),
                     _legendDot(Colors.grey),
                     const SizedBox(width: 8),
                     const Text('Finish',
-                        style: TextStyle(
-                            color: Colors.white54, fontSize: 13)),
+                        style: TextStyle(color: Colors.white54, fontSize: 13)),
                     const Spacer(),
                     Container(
-                      width: 30,
-                      height: 3,
+                      width: 30, height: 3,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(2),
                         color: Colors.white,
@@ -198,8 +192,7 @@ class RunDetailScreen extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     const Text('Route',
-                        style: TextStyle(
-                            color: Colors.white54, fontSize: 13)),
+                        style: TextStyle(color: Colors.white54, fontSize: 13)),
                   ]),
                   const SizedBox(height: 24),
                 ],
@@ -227,69 +220,62 @@ class RunDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _bigStat(String value, String unit, String label) =>
-      Expanded(
-        child: Column(children: [
-          Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(value,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900)),
-                if (unit.isNotEmpty)
-                  Padding(
-                    padding:
-                    const EdgeInsets.only(bottom: 3, left: 3),
-                    child: Text(unit,
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 12)),
-                  ),
-              ]),
-          const SizedBox(height: 4),
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 11,
-                  letterSpacing: 0.5)),
-        ]),
-      );
-
-  Widget _vDivider() => Container(
-      width: 1,
-      height: 38,
-      color: Colors.white12,
-      margin: const EdgeInsets.symmetric(horizontal: 4));
-
-  Widget _miniCard(String label, String value, IconData icon) =>
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF111111),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withOpacity(0.07)),
-        ),
-        child: Row(children: [
-          Icon(icon, color: Colors.white54, size: 18),
-          const SizedBox(width: 10),
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+  Widget _bigStat(String value, String unit, String label) => Expanded(
+    child: Column(children: [
+      Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
             Text(value,
                 style: const TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14)),
-            Text(label,
-                style: const TextStyle(
-                    color: Colors.white38, fontSize: 10)),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900)),
+            if (unit.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3, left: 3),
+                child: Text(unit,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 12)),
+              ),
           ]),
-        ]),
-      );
+      const SizedBox(height: 4),
+      Text(label,
+          style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 11,
+              letterSpacing: 0.5)),
+    ]),
+  );
+
+  Widget _vDivider() => Container(
+      width: 1, height: 38, color: Colors.white12,
+      margin: const EdgeInsets.symmetric(horizontal: 4));
+
+  Widget _miniCard(String label, String value, IconData icon) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFF111111),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: Colors.white.withOpacity(0.07)),
+    ),
+    child: Row(children: [
+      Icon(icon, color: Colors.white54, size: 18),
+      const SizedBox(width: 10),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14)),
+        Text(label,
+            style: const TextStyle(color: Colors.white38, fontSize: 10)),
+      ]),
+    ]),
+  );
 
   Widget _legendDot(Color color) => Container(
-      width: 12,
-      height: 12,
+      width: 12, height: 12,
       decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: color,
@@ -297,21 +283,28 @@ class RunDetailScreen extends StatelessWidget {
 
   String _avgSpeed(RunSession s) {
     if (s.elapsed.inSeconds == 0) return '0.0 km/h';
-    final kmh =
-        s.distanceKm / (s.elapsed.inSeconds / 3600);
+    final kmh = s.distanceKm / (s.elapsed.inSeconds / 3600);
     return '${kmh.toStringAsFixed(1)} km/h';
+  }
+
+  String _cadence(RunSession s) {
+    if (s.elapsed.inSeconds < 10 || s.steps == 0) return '--';
+    final spm = (s.steps / (s.elapsed.inSeconds / 60)).round();
+    return '$spm spm';
   }
 
   String _fmtDate(DateTime dt) {
     const months = [
-      'January','February','March','April','May','June',
-      'July','August','September','October','November','December'
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
     ];
     const days = [
-      'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'
+      'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+      'Friday', 'Saturday', 'Sunday'
     ];
     final day = days[dt.weekday - 1];
     final month = months[dt.month - 1];
-    return '$day, $month ${dt.day} ${dt.year}  •  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    return '$day, $month ${dt.day} ${dt.year}  •  '
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

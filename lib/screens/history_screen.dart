@@ -36,8 +36,7 @@ class HistoryScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
             child: Text(
                 '${sessions.length} run${sessions.length == 1 ? '' : 's'} recorded',
-                style:
-                const TextStyle(color: Colors.white24, fontSize: 13)),
+                style: const TextStyle(color: Colors.white24, fontSize: 13)),
           ),
         if (sessions.isEmpty)
           Expanded(
@@ -46,8 +45,7 @@ class HistoryScreen extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      width: 80,
-                      height: 80,
+                      width: 80, height: 80,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: const Color(0xFF111111),
@@ -64,8 +62,7 @@ class HistoryScreen extends StatelessWidget {
                             fontWeight: FontWeight.w600)),
                     const SizedBox(height: 8),
                     const Text('Complete a run to see it here',
-                        style: TextStyle(
-                            color: Colors.white12, fontSize: 13)),
+                        style: TextStyle(color: Colors.white12, fontSize: 13)),
                   ]),
             ),
           )
@@ -103,8 +100,7 @@ class _RunCard extends StatelessWidget {
     return GestureDetector(
       onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(
-              builder: (_) => RunDetailScreen(session: s))),
+          MaterialPageRoute(builder: (_) => RunDetailScreen(session: s))),
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
@@ -112,12 +108,10 @@ class _RunCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: Colors.white.withOpacity(0.07)),
         ),
-        child:
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // Map preview
           ClipRRect(
-            borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(22)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
             child: Stack(children: [
               SizedBox(
                 height: 160,
@@ -153,26 +147,22 @@ class _RunCard extends StatelessWidget {
                       if (s.routePoints.isNotEmpty) ...[
                         Marker(
                             point: s.routePoints.first,
-                            width: 12,
-                            height: 12,
+                            width: 12, height: 12,
                             child: Container(
                                 decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: Colors.white,
                                     border: Border.all(
-                                        color: Colors.black38,
-                                        width: 1.5)))),
+                                        color: Colors.black38, width: 1.5)))),
                         Marker(
                             point: s.routePoints.last,
-                            width: 12,
-                            height: 12,
+                            width: 12, height: 12,
                             child: Container(
                                 decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: Colors.grey.shade400,
                                     border: Border.all(
-                                        color: Colors.black38,
-                                        width: 1.5)))),
+                                        color: Colors.black38, width: 1.5)))),
                       ],
                     ]),
                   ],
@@ -185,8 +175,7 @@ class _RunCard extends StatelessWidget {
               ),
               // Details chip
               Positioned(
-                top: 10,
-                right: 10,
+                top: 10, right: 10,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 5),
@@ -196,12 +185,10 @@ class _RunCard extends StatelessWidget {
                     border: Border.all(color: Colors.white12),
                   ),
                   child: const Row(children: [
-                    Icon(Icons.open_in_new,
-                        color: Colors.white38, size: 11),
+                    Icon(Icons.open_in_new, color: Colors.white38, size: 11),
                     SizedBox(width: 4),
                     Text('Details',
-                        style: TextStyle(
-                            color: Colors.white38, fontSize: 11)),
+                        style: TextStyle(color: Colors.white38, fontSize: 11)),
                   ]),
                 ),
               ),
@@ -220,8 +207,7 @@ class _RunCard extends StatelessWidget {
                 ),
               ),
               Positioned(
-                bottom: 6,
-                left: 10,
+                bottom: 6, left: 10,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 3),
@@ -229,12 +215,10 @@ class _RunCard extends StatelessWidget {
                       color: Colors.black.withOpacity(0.65),
                       borderRadius: BorderRadius.circular(10)),
                   child: const Row(children: [
-                    Icon(Icons.photo_camera,
-                        color: Colors.white38, size: 11),
+                    Icon(Icons.photo_camera, color: Colors.white38, size: 11),
                     SizedBox(width: 4),
                     Text('Run photo',
-                        style: TextStyle(
-                            color: Colors.white38, fontSize: 10)),
+                        style: TextStyle(color: Colors.white38, fontSize: 10)),
                   ]),
                 ),
               ),
@@ -252,12 +236,28 @@ class _RunCard extends StatelessWidget {
                           fontSize: 11,
                           letterSpacing: 0.4)),
                   const SizedBox(height: 14),
+                  // Row 1: Distance, Time, Pace, Cal
                   Row(children: [
                     _stat('${s.formattedDistance} km', 'Distance'),
                     _stat(s.formattedTime, 'Time'),
                     _stat('${s.formattedPace} /km', 'Pace'),
                     _stat(s.estimatedCalories, 'Cal'),
                   ]),
+                  // Row 2: Steps + Cadence (only if steps recorded)
+                  if (s.steps > 0) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      height: 1,
+                      color: Colors.white.withOpacity(0.05),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      _stat(s.formattedSteps, 'Steps'),
+                      _stat(_cadence(s), 'Cadence'),
+                      _stat('', ''), // spacer
+                      _stat('', ''), // spacer
+                    ]),
+                  ],
                   const SizedBox(height: 14),
                   Row(children: [
                     Expanded(
@@ -265,8 +265,7 @@ class _RunCard extends StatelessWidget {
                         onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) =>
-                                    RunDetailScreen(session: s))),
+                                builder: (_) => RunDetailScreen(session: s))),
                         child: Container(
                           height: 40,
                           decoration: BoxDecoration(
@@ -292,8 +291,7 @@ class _RunCard extends StatelessWidget {
                     GestureDetector(
                       onTap: () => _confirmDelete(context),
                       child: Container(
-                        width: 40,
-                        height: 40,
+                        width: 40, height: 40,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.white.withOpacity(0.05),
@@ -312,27 +310,31 @@ class _RunCard extends StatelessWidget {
     );
   }
 
-  Widget _stat(String value, String label) =>
-      Expanded(
-          child: Column(children: [
-            Text(value,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13)),
-            const SizedBox(height: 2),
-            Text(label,
-                style:
-                const TextStyle(color: Colors.white24, fontSize: 10)),
-          ]));
+  Widget _stat(String value, String label) => Expanded(
+      child: Column(children: [
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 13)),
+        const SizedBox(height: 2),
+        Text(label,
+            style: const TextStyle(color: Colors.white24, fontSize: 10)),
+      ]));
+
+  String _cadence(RunSession s) {
+    if (s.elapsed.inSeconds < 10 || s.steps == 0) return '--';
+    final spm = (s.steps / (s.elapsed.inSeconds / 60)).round();
+    return '$spm spm';
+  }
 
   Future<void> _confirmDelete(BuildContext context) async {
     await showDialog(
         context: context,
         builder: (_) => AlertDialog(
           backgroundColor: const Color(0xFF1A1A1A),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22)),
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
           title: const Text('Delete Run?',
               style: TextStyle(color: Colors.white)),
           content: const Text('This cannot be undone.',
@@ -357,9 +359,10 @@ class _RunCard extends StatelessWidget {
 
   String _fmtDate(DateTime dt) {
     const m = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec'
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
-    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  •  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  •  '
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

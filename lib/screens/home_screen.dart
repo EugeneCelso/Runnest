@@ -40,7 +40,16 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   double get _totalKm =>
-      _sessions.fold(0, (sum, s) => sum + s.distanceKm);
+      _sessions.fold(0.0, (sum, s) => sum + s.distanceKm);
+
+  int get _totalSteps =>
+      _sessions.fold(0, (sum, s) => sum + s.steps);
+
+  int get _totalCalories =>
+      _sessions.fold(0, (sum, s) => sum + (s.distanceKm * 62).round());
+
+  Duration get _totalTime =>
+      _sessions.fold(Duration.zero, (sum, s) => sum + s.elapsed);
 
   String get _avgPace {
     final valid = _sessions.where((s) => s.pacePerKm > 0).toList();
@@ -50,6 +59,59 @@ class _HomeScreenState extends State<HomeScreen>
     final m = (avg / 60).floor();
     final s = (avg % 60).round();
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  String get _bestPace {
+    final valid = _sessions.where((s) => s.pacePerKm > 0).toList();
+    if (valid.isEmpty) return '--:--';
+    final best =
+    valid.map((s) => s.pacePerKm).reduce((a, b) => a < b ? a : b);
+    final m = (best / 60).floor();
+    final s = (best % 60).round();
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  String get _longestRun {
+    if (_sessions.isEmpty) return '0.00';
+    return _sessions
+        .map((s) => s.distanceKm)
+        .reduce((a, b) => a > b ? a : b)
+        .toStringAsFixed(2);
+  }
+
+  String get _formattedTotalTime {
+    final h = _totalTime.inHours;
+    final m = _totalTime.inMinutes.remainder(60);
+    if (h > 0) return '${h}h ${m}m';
+    return '${m}m';
+  }
+
+  String get _formattedTotalSteps {
+    if (_totalSteps >= 1000)
+      return '${(_totalSteps / 1000).toStringAsFixed(1)}k';
+    return '$_totalSteps';
+  }
+
+  String get _formattedTotalCalories {
+    if (_totalCalories >= 1000)
+      return '${(_totalCalories / 1000).toStringAsFixed(1)}k';
+    return '$_totalCalories';
+  }
+
+  double get _weekKm {
+    final now = DateTime.now();
+    final weekStart = now.subtract(Duration(days: now.weekday - 1));
+    final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    return _sessions
+        .where((s) => s.startTime.isAfter(start))
+        .fold(0.0, (sum, s) => sum + s.distanceKm);
+  }
+
+  int get _weekRuns {
+    final now = DateTime.now();
+    final weekStart = now.subtract(Duration(days: now.weekday - 1));
+    final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    return _sessions.where((s) => s.startTime.isAfter(start)).length;
   }
 
   @override
@@ -74,12 +136,13 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildHome() {
     return SafeArea(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 32),
-            // Header
+            const SizedBox(height: 26),
+
+            // ── Header ──────────────────────────────────────────────
             Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -87,15 +150,14 @@ class _HomeScreenState extends State<HomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         ShaderMask(
-                          shaderCallback: (bounds) =>
-                              const LinearGradient(
-                                colors: [Colors.white, Color(0xFFAAAAAA)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ).createShader(bounds),
+                          shaderCallback: (bounds) => const LinearGradient(
+                            colors: [Colors.white, Color(0xFFAAAAAA)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ).createShader(bounds),
                           child: const Text('RUNNE\$T',
                               style: TextStyle(
-                                  fontSize: 32,
+                                  fontSize: 30,
                                   fontWeight: FontWeight.w900,
                                   color: Colors.white,
                                   letterSpacing: 4)),
@@ -106,12 +168,12 @@ class _HomeScreenState extends State<HomeScreen>
                               ? 'Ready to run?'
                               : '${_sessions.length} run${_sessions.length == 1 ? '' : 's'} logged',
                           style: const TextStyle(
-                              color: Colors.white38, fontSize: 13),
+                              color: Colors.white38, fontSize: 12),
                         ),
                       ]),
                   Container(
-                    width: 48,
-                    height: 48,
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: LinearGradient(
@@ -125,38 +187,125 @@ class _HomeScreenState extends State<HomeScreen>
                       border: Border.all(color: Colors.white12),
                     ),
                     child: const Icon(Icons.person_outline,
-                        color: Colors.white54),
+                        color: Colors.white54, size: 20),
                   ),
                 ]),
-            const SizedBox(height: 28),
+            const SizedBox(height: 16),
 
-            // Stats row
-            Row(children: [
-              _statCard('Total Distance',
-                  '${_totalKm.toStringAsFixed(1)} km', Icons.route_outlined),
-              const SizedBox(width: 12),
-              _statCard(
-                  'Avg Pace', '$_avgPace /km', Icons.speed_outlined),
-            ]),
-            const SizedBox(height: 24),
+            // ── This week pill ───────────────────────────────────────
+            if (_sessions.isNotEmpty) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111111),
+                  borderRadius: BorderRadius.circular(14),
+                  border:
+                  Border.all(color: Colors.white.withOpacity(0.07)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.calendar_today_outlined,
+                      color: Colors.white38, size: 13),
+                  const SizedBox(width: 8),
+                  const Text('This week',
+                      style: TextStyle(
+                          color: Colors.white38, fontSize: 12)),
+                  const Spacer(),
+                  Text('${_weekKm.toStringAsFixed(1)} km',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13)),
+                  const SizedBox(width: 6),
+                  Text(
+                      '· $_weekRuns run${_weekRuns == 1 ? '' : 's'}',
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 12)),
+                ]),
+              ),
+              const SizedBox(height: 12),
 
-            // START button — hero card
+              // ── Stats grid: 2 columns, medium cards ─────────────
+              // Row 1
+              Row(children: [
+                _statCard(
+                  '${_totalKm.toStringAsFixed(1)} km',
+                  'Total Distance',
+                  Icons.route_outlined,
+                ),
+                const SizedBox(width: 10),
+                _statCard(
+                  '$_avgPace /km',
+                  'Avg Pace',
+                  Icons.speed_outlined,
+                ),
+              ]),
+              const SizedBox(height: 10),
+              // Row 2
+              Row(children: [
+                _statCard(
+                  _formattedTotalSteps,
+                  'Total Steps',
+                  Icons.directions_walk_outlined,
+                ),
+                const SizedBox(width: 10),
+                _statCard(
+                  '$_formattedTotalCalories kcal',
+                  'Calories Burned',
+                  Icons.local_fire_department_outlined,
+                ),
+              ]),
+              const SizedBox(height: 10),
+              // Row 3
+              Row(children: [
+                _statCard(
+                  '$_bestPace /km',
+                  'Best Pace',
+                  Icons.emoji_events_outlined,
+                ),
+                const SizedBox(width: 10),
+                _statCard(
+                  '$_longestRun km',
+                  'Longest Run',
+                  Icons.straighten_outlined,
+                ),
+              ]),
+              const SizedBox(height: 10),
+              // Row 4
+              Row(children: [
+                _statCard(
+                  _formattedTotalTime,
+                  'Total Time',
+                  Icons.timer_outlined,
+                ),
+                const SizedBox(width: 10),
+                _statCard(
+                  '${_sessions.length}',
+                  'Total Runs',
+                  Icons.replay_outlined,
+                ),
+              ]),
+              const SizedBox(height: 20),
+            ] else
+              const SizedBox(height: 4),
+
+            // ── START RUN button ────────────────────────────────────
             GestureDetector(
               onTap: () async {
-                await Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const RunScreen()));
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const RunScreen()));
                 _load();
               },
               child: Container(
                 width: double.infinity,
-                height: 200,
+                height: 180,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
+                  borderRadius: BorderRadius.circular(26),
                   gradient: const LinearGradient(
-                    colors: [
-                      Color(0xFF1C1C1C),
-                      Color(0xFF111111),
-                    ],
+                    colors: [Color(0xFF1C1C1C), Color(0xFF111111)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
@@ -166,7 +315,6 @@ class _HomeScreenState extends State<HomeScreen>
                     BoxShadow(
                       color: Colors.white.withOpacity(0.04),
                       blurRadius: 20,
-                      spreadRadius: 0,
                     )
                   ],
                 ),
@@ -174,96 +322,132 @@ class _HomeScreenState extends State<HomeScreen>
                   Positioned.fill(
                       child: CustomPaint(painter: _GridPainter())),
                   Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 76,
-                        height: 76,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: const LinearGradient(
-                            colors: [Colors.white, Color(0xFFBBBBBB)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 68,
+                          height: 68,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              colors: [
+                                Colors.white,
+                                Color(0xFFBBBBBB)
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.white.withOpacity(0.28),
+                                blurRadius: 24,
+                                spreadRadius: 3,
+                              )
+                            ],
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.white.withOpacity(0.3),
-                              blurRadius: 28,
-                              spreadRadius: 4,
-                            )
-                          ],
+                          child: const Icon(Icons.play_arrow_rounded,
+                              size: 36, color: Colors.black),
                         ),
-                        child: const Icon(Icons.play_arrow_rounded,
-                            size: 42, color: Colors.black),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text('START RUN',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 5)),
-                      const SizedBox(height: 4),
-                      const Text('Tap to begin tracking',
-                          style: TextStyle(
-                              color: Colors.white24, fontSize: 12)),
-                    ],
-                  ),
+                        const SizedBox(height: 13),
+                        const Text('START RUN',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 5)),
+                        const SizedBox(height: 3),
+                        const Text('Tap to begin tracking',
+                            style: TextStyle(
+                                color: Colors.white24, fontSize: 11)),
+                      ]),
                 ]),
               ),
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 22),
 
-            // Recent runs
+            // ── Recent runs ──────────────────────────────────────────
             if (_sessions.isNotEmpty) ...[
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Recent',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700)),
-                  GestureDetector(
-                    onTap: () => setState(() => _tab = 1),
-                    child: const Text('See all',
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Recent',
                         style: TextStyle(
-                            color: Colors.white38, fontSize: 13)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700)),
+                    GestureDetector(
+                      onTap: () => setState(() => _tab = 1),
+                      child: const Text('See all',
+                          style: TextStyle(
+                              color: Colors.white38, fontSize: 12)),
+                    ),
+                  ]),
+              const SizedBox(height: 10),
               ..._sessions.take(3).map((s) => _recentCard(s)),
             ],
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
 
+  /// Medium card — 2 per row, icon + large value + label
+  Widget _statCard(String value, String label, IconData icon) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111111),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
+      ),
+      child: Row(children: [
+        Icon(icon, color: Colors.white38, size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 10)),
+              ]),
+        ),
+      ]),
+    ),
+  );
+
   Widget _recentCard(RunSession s) => Container(
-    margin: const EdgeInsets.only(bottom: 10),
-    padding: const EdgeInsets.all(16),
+    margin: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.all(13),
     decoration: BoxDecoration(
       color: const Color(0xFF111111),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       border: Border.all(color: Colors.white.withOpacity(0.07)),
     ),
     child: Row(children: [
       Container(
-        width: 44,
-        height: 44,
+        width: 38,
+        height: 38,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.white.withOpacity(0.07),
           border: Border.all(color: Colors.white12),
         ),
         child: const Icon(Icons.directions_run,
-            color: Colors.white54, size: 22),
+            color: Colors.white54, size: 18),
       ),
-      const SizedBox(width: 14),
+      const SizedBox(width: 12),
       Expanded(
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -272,46 +456,33 @@ class _HomeScreenState extends State<HomeScreen>
                   style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
-                      fontSize: 15)),
-              Text(
-                  '${s.formattedPace} /km  •  ${s.formattedTime}',
-                  style: const TextStyle(
-                      color: Colors.white38, fontSize: 12)),
+                      fontSize: 14)),
+              const SizedBox(height: 2),
+              Row(children: [
+                Flexible(
+                  child: Text(
+                      '${s.formattedPace} /km  •  ${s.formattedTime}',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11)),
+                ),
+                if (s.steps > 0) ...[
+                  const Text('  •  ',
+                      style: TextStyle(
+                          color: Colors.white24, fontSize: 11)),
+                  Text('${s.formattedSteps} steps',
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11)),
+                ],
+              ]),
             ]),
       ),
+      const SizedBox(width: 8),
       Text(_fmtDate(s.startTime),
           style: const TextStyle(
-              color: Colors.white24, fontSize: 11)),
+              color: Colors.white24, fontSize: 10)),
     ]),
   );
-
-  Widget _statCard(String label, String value, IconData icon) =>
-      Expanded(
-        child: Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: const Color(0xFF111111),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-                color: Colors.white.withOpacity(0.07)),
-          ),
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, color: Colors.white54, size: 22),
-                const SizedBox(height: 10),
-                Text(value,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 2),
-                Text(label,
-                    style: const TextStyle(
-                        color: Colors.white38, fontSize: 11)),
-              ]),
-        ),
-      );
 
   Widget _buildNav() => Container(
     decoration: const BoxDecoration(
@@ -343,8 +514,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   String _fmtDate(DateTime dt) {
     const m = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec'
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
     return '${m[dt.month - 1]} ${dt.day}';
   }

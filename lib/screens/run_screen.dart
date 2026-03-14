@@ -9,6 +9,7 @@ import '../models/run_sessions.dart';
 import '../services/locations_services.dart';
 import '../services/storage_service.dart';
 import '../services/photo_overlay_service.dart';
+import '../services/step_counter_service.dart';
 import 'summary_screen.dart';
 
 class RunScreen extends StatefulWidget {
@@ -21,15 +22,17 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   final _loc = LocationService();
   final _storage = StorageService();
   final _overlay = PhotoOverlayService();
+  final _steps = StepCounterService();
   final _mapCtrl = MapController();
 
   CameraController? _cam;
   List<CameraDescription> _cameras = [];
   bool _camVisible = false;
-  bool _camExpanded = false; // NEW: fullscreen/expanded camera mode
+  bool _camExpanded = false;
   bool _savingPhoto = false;
   bool _isFrontCam = false;
   bool _camSwitching = false;
+  bool _flashOn = false;
   bool get _camReady =>
       _cam != null &&
           (_cam?.value.isInitialized ?? false) &&
@@ -44,6 +47,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   late RunSession _session;
   Timer? _uiTimer;
   StreamSubscription<Position>? _locSub;
+  StreamSubscription<int>? _stepSub;
 
   Position? _lastRecordedPos;
   LatLng? _currentLatLng;
@@ -53,6 +57,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   int _elapsedSeconds = 0;
   double _currentSpeedMs = 0;
   double _gpsAccuracy = 0;
+  int _currentSteps = 0;
 
   static const double _minRecordDistMeters = 2.0;
   static const int _minRecordIntervalMs = 1500;
@@ -62,8 +67,6 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   late Animation<double> _pulseAnim;
   late AnimationController _fadeCtrl;
   late Animation<double> _fadeAnim;
-
-  // Camera expand animation
   late AnimationController _camExpandCtrl;
   late Animation<double> _camExpandAnim;
 
@@ -137,7 +140,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     try {
       if (mounted) setState(() { _cam = null; _camSwitching = true; });
       if (oldCam != null) {
-        try { await oldCam.dispose(); } catch (e) { debugPrint('Old cam dispose error: $e'); }
+        try { await oldCam.dispose(); } catch (e) { debugPrint('Old cam dispose: $e'); }
       }
       await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
@@ -146,6 +149,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
         enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg,
       );
       await controller.initialize();
+      await controller.setFlashMode(FlashMode.off);
       if (!mounted) { await controller.dispose(); return; }
       setState(() { _cam = controller; _camSwitching = false; });
     } catch (e) {
@@ -163,7 +167,19 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     final camIndex = _cameras.indexWhere((c) => c.lensDirection == targetDirection);
     if (camIndex == -1) { _snack('Camera not found'); return; }
     _isFrontCam = !_isFrontCam;
+    setState(() => _flashOn = false);
     await _setupCamera(camIndex);
+  }
+
+  Future<void> _toggleFlash() async {
+    if (!_camReady) return;
+    final newMode = _flashOn ? FlashMode.off : FlashMode.torch;
+    try {
+      await _cam!.setFlashMode(newMode);
+      setState(() => _flashOn = !_flashOn);
+    } catch (e) {
+      _snack('Flash unavailable');
+    }
   }
 
   void _startRun() {
@@ -175,10 +191,18 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       _isPaused = false;
       _distanceMeters = 0;
       _elapsedSeconds = 0;
+      _currentSteps = 0;
       _polylinePoints.clear();
       _lastRecordedPos = seedPos;
       _lastRecordedTime = DateTime.now();
     });
+
+    // Start step counter
+    _steps.start(initialSteps: 0);
+    _stepSub = _steps.stepStream.listen((s) {
+      if (mounted && !_isPaused) setState(() => _currentSteps = s);
+    });
+
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isPaused && _isRunning && mounted) setState(() => _elapsedSeconds++);
     });
@@ -244,11 +268,17 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  String get _displaySteps {
+    if (_currentSteps >= 1000) return '${(_currentSteps / 1000).toStringAsFixed(1)}k';
+    return '$_currentSteps';
+  }
+
   void _syncSession() {
     _session.distanceKm = _distanceKm;
     _session.elapsed = Duration(seconds: _elapsedSeconds);
     _session.pacePerKm = _distanceKm > 0 ? _elapsedSeconds / _distanceKm : 0;
     _session.routePoints = List.from(_polylinePoints);
+    _session.steps = _currentSteps;
   }
 
   Future<void> _takePhoto() async {
@@ -261,8 +291,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       if (overlayPath != null && mounted) {
         _session.photoPath = overlayPath;
         _snack('📸 Photo saved!');
-        // Collapse camera after taking photo
-        setState(() { _camVisible = false; _camExpanded = false; });
+        setState(() { _camVisible = false; _camExpanded = false; _flashOn = false; });
         _camExpandCtrl.reverse();
       }
     } catch (e) {
@@ -275,16 +304,10 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
 
   void _toggleCamExpand() {
     setState(() => _camExpanded = !_camExpanded);
-    if (_camExpanded) {
-      _camExpandCtrl.forward();
-    } else {
-      _camExpandCtrl.reverse();
-    }
+    _camExpanded ? _camExpandCtrl.forward() : _camExpandCtrl.reverse();
   }
 
-  // ---- Post-run photo prompt then stop ----
   Future<void> _showStop() async {
-    // Step 1: confirm finish
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -306,10 +329,8 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
 
-    // Step 2: if no photo yet and camera is available, offer to take one
     if (_session.photoPath == null && _camReady && mounted) {
       final takePhoto = await showDialog<bool>(
         context: context,
@@ -335,23 +356,24 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           ],
         ),
       );
-
       if (takePhoto == true && mounted) {
-        // Open camera expanded so user can take the shot, then finish
         setState(() { _camVisible = true; _camExpanded = true; });
         _camExpandCtrl.forward();
-        // Show a small reminder snack
         _snack('Take your photo, then tap ✓ Finish Run');
-        return; // Wait — user will finish via the "Finish Run" shortcut button
+        return;
       }
     }
-
     await _stopRun();
   }
 
   Future<void> _stopRun() async {
+    if (_flashOn && _camReady) {
+      try { await _cam!.setFlashMode(FlashMode.off); } catch (_) {}
+    }
     _uiTimer?.cancel();
     _locSub?.cancel();
+    _stepSub?.cancel();
+    _steps.stop();
     _loc.stop();
     _syncSession();
     _session.endTime = DateTime.now();
@@ -380,6 +402,8 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   void dispose() {
     _uiTimer?.cancel();
     _locSub?.cancel();
+    _stepSub?.cancel();
+    _steps.dispose();
     _loc.dispose();
     try { _mapCtrl.dispose(); } catch (_) {}
     if (!_camTransferred) _cam?.dispose();
@@ -400,7 +424,6 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           _buildTopGradient(),
           _buildTopBar(),
           if (_camVisible) _buildCamOverlay(),
-          // "Finish Run" floating button visible when camera is expanded
           if (_camExpanded && _isRunning) _buildFinishRunFab(),
           Positioned(
             bottom: 0, left: 0, right: 0,
@@ -411,7 +434,6 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Floating "Finish Run" button shown when camera is expanded
   Widget _buildFinishRunFab() {
     return Positioned(
       bottom: MediaQuery.of(context).padding.bottom + 24,
@@ -450,8 +472,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
             CircularProgressIndicator(color: Colors.white70, strokeWidth: 1.5),
             SizedBox(height: 24),
             Text('Acquiring GPS signal...',
-                style: TextStyle(
-                    color: Colors.white54, fontSize: 15,
+                style: TextStyle(color: Colors.white54, fontSize: 15,
                     letterSpacing: 0.8, fontWeight: FontWeight.w400)),
             SizedBox(height: 6),
             Text('Move outside for best accuracy',
@@ -554,8 +575,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
               border: Border.all(color: Colors.white12),
             ),
             child: const Text('RUNNE\$T',
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w900,
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900,
                     fontSize: 14, letterSpacing: 2)),
           ),
           Row(children: [
@@ -576,7 +596,12 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
             _topBtn(Icons.camera_alt_outlined, _camVisible, () {
               if (_camReady) {
                 setState(() { _camVisible = !_camVisible; });
-                if (!_camVisible) { _camExpanded = false; _camExpandCtrl.reverse(); }
+                if (!_camVisible) {
+                  _camExpanded = false;
+                  _flashOn = false;
+                  _camExpandCtrl.reverse();
+                  _cam?.setFlashMode(FlashMode.off).catchError((_) {});
+                }
               } else if (_camSetupInProgress || _camSwitching) {
                 _snack('Camera is loading...');
               } else {
@@ -603,18 +628,15 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
         ),
       );
 
-  // ---- Expandable camera overlay ----
   Widget _buildCamOverlay() {
     final screen = MediaQuery.of(context).size;
     final topPad = MediaQuery.of(context).padding.top;
 
-    // Small pip
     const double smallW = 200.0;
     const double smallH = 266.0;
     const double smallRight = 12.0;
     final double smallTop = topPad + 70;
 
-    // Expanded
     final double bigW = screen.width - 32;
     final double bigH = screen.height * 0.68;
     const double bigRight = 16.0;
@@ -631,8 +653,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
         final radius = 20.0 - 4.0 * t;
 
         return Positioned(
-          top: top,
-          right: right,
+          top: top, right: right,
           child: Container(
             width: w, height: h,
             decoration: BoxDecoration(
@@ -643,7 +664,6 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(radius - 1),
               child: Stack(children: [
-                // Preview
                 if (_camSwitching || !_camReady)
                   Container(
                     width: w, height: h, color: Colors.black,
@@ -662,13 +682,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                   KeyedSubtree(
                     key: ValueKey(_cam),
                     child: GestureDetector(
-                      // Tap preview (small mode) to expand
                       onTap: !_camExpanded ? _toggleCamExpand : null,
                       child: SizedBox(width: w, height: h, child: CameraPreview(_cam!)),
                     ),
                   ),
 
-                // "Tap to expand" hint badge (small mode only)
                 if (!_camExpanded && _camReady && t < 0.1)
                   Positioned(
                     top: 8, left: 0, right: 0,
@@ -685,7 +703,23 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                     ),
                   ),
 
-                // Bottom controls
+                if (_flashOn)
+                  Positioned(
+                    top: 8, left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.flash_on, color: Colors.black, size: 10),
+                        SizedBox(width: 2),
+                        Text('ON', style: TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.bold)),
+                      ]),
+                    ),
+                  ),
+
                 Positioned(
                   bottom: 0, left: 0, right: 0,
                   child: Container(
@@ -697,12 +731,9 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                       ),
                     ),
                     child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                      _camBtn(
-                        Icons.flip_camera_ios_outlined,
-                        (_camSwitching || _camSetupInProgress) ? null : _flipCamera,
-                        size: _camExpanded ? 48 : 36,
-                      ),
-                      // Shutter
+                      _camBtn(Icons.flip_camera_ios_outlined,
+                          (_camSwitching || _camSetupInProgress) ? null : _flipCamera,
+                          size: _camExpanded ? 48 : 36),
                       GestureDetector(
                         onTap: _camReady ? _takePhoto : null,
                         child: Container(
@@ -720,13 +751,18 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                               : Icon(Icons.camera_alt, color: Colors.black, size: _camExpanded ? 34 : 26),
                         ),
                       ),
-                      // Collapse or close
+                      _camBtn(
+                        _flashOn ? Icons.flash_on : Icons.flash_off,
+                        _camReady ? _toggleFlash : null,
+                        size: _camExpanded ? 48 : 36,
+                        active: _flashOn,
+                        activeColor: Colors.amber,
+                      ),
                       _camBtn(
                         _camExpanded ? Icons.fullscreen_exit : Icons.close,
-                        _camExpanded
-                            ? _toggleCamExpand
-                            : () {
-                          setState(() { _camVisible = false; _camExpanded = false; });
+                        _camExpanded ? _toggleCamExpand : () {
+                          if (_flashOn) _cam?.setFlashMode(FlashMode.off).catchError((_) {});
+                          setState(() { _camVisible = false; _camExpanded = false; _flashOn = false; });
                           _camExpandCtrl.reverse();
                         },
                         size: _camExpanded ? 48 : 36,
@@ -742,7 +778,11 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _camBtn(IconData icon, VoidCallback? onTap, {double size = 36}) =>
+  Widget _camBtn(IconData icon, VoidCallback? onTap, {
+    double size = 36,
+    bool active = false,
+    Color activeColor = Colors.white,
+  }) =>
       GestureDetector(
         onTap: onTap,
         child: Container(
@@ -751,10 +791,13 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
             shape: BoxShape.circle,
             color: onTap == null
                 ? Colors.white.withOpacity(0.08)
+                : active
+                ? activeColor.withOpacity(0.30)
                 : Colors.white.withOpacity(0.22),
+            border: active ? Border.all(color: activeColor.withOpacity(0.7), width: 1.5) : null,
           ),
           child: Icon(icon,
-              color: onTap == null ? Colors.white30 : Colors.white,
+              color: onTap == null ? Colors.white30 : active ? activeColor : Colors.white,
               size: size * 0.5),
         ),
       );
@@ -808,6 +851,8 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           ),
         ]),
       ),
+
+      // Main stats
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         decoration: BoxDecoration(
@@ -815,12 +860,26 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Colors.white.withOpacity(0.08)),
         ),
-        child: Row(children: [
-          _statWidget('DISTANCE', '$_displayDistance', 'km'),
-          _vDivider(),
-          _statWidget('PACE', _displayPace, '/km'),
-          _vDivider(),
-          _statWidget('TIME', _displayTime, ''),
+        child: Column(children: [
+          Row(children: [
+            _statWidget('DISTANCE', '$_displayDistance', 'km'),
+            _vDivider(),
+            _statWidget('PACE', _displayPace, '/km'),
+            _vDivider(),
+            _statWidget('TIME', _displayTime, ''),
+          ]),
+          if (_isRunning) ...[
+            const SizedBox(height: 14),
+            Container(height: 1, color: Colors.white.withOpacity(0.06)),
+            const SizedBox(height: 14),
+            Row(children: [
+              _statWidget('STEPS', _displaySteps, ''),
+              _vDivider(),
+              _statWidget('CADENCE', _cadence, 'spm'),
+              _vDivider(),
+              _statWidget('CALORIES', _calories, 'kcal'),
+            ]),
+          ],
         ]),
       ),
       const SizedBox(height: 24),
@@ -841,7 +900,12 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
             onTap: () {
               if (_camReady) {
                 setState(() { _camVisible = !_camVisible; });
-                if (!_camVisible) { _camExpanded = false; _camExpandCtrl.reverse(); }
+                if (!_camVisible) {
+                  _camExpanded = false;
+                  _flashOn = false;
+                  _camExpandCtrl.reverse();
+                  _cam?.setFlashMode(FlashMode.off).catchError((_) {});
+                }
               } else {
                 _snack((_camSetupInProgress || _camSwitching)
                     ? 'Camera is loading...' : 'Camera unavailable');
@@ -853,18 +917,29 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
     ]),
   );
 
+  // Cadence: steps per minute
+  String get _cadence {
+    if (_elapsedSeconds < 10 || _currentSteps == 0) return '--';
+    final spm = (_currentSteps / (_elapsedSeconds / 60)).round();
+    return '$spm';
+  }
+
+  // Live calorie estimate
+  String get _calories {
+    final cal = (_distanceKm * 62).round();
+    return '$cal';
+  }
+
   Widget _statWidget(String label, String value, String unit) => Expanded(
     child: Column(children: [
       Text(label,
-          style: const TextStyle(
-              color: Colors.white38, fontSize: 9,
+          style: const TextStyle(color: Colors.white38, fontSize: 9,
               letterSpacing: 1.4, fontWeight: FontWeight.w600)),
       const SizedBox(height: 6),
       FittedBox(
         fit: BoxFit.scaleDown,
         child: Text(value,
-            style: const TextStyle(
-                color: Colors.white, fontSize: 24,
+            style: const TextStyle(color: Colors.white, fontSize: 24,
                 fontWeight: FontWeight.w800, letterSpacing: -0.5)),
       ),
       if (unit.isNotEmpty)
@@ -873,8 +948,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   );
 
   Widget _vDivider() => Container(
-    width: 1, height: 40,
-    color: Colors.white12,
+    width: 1, height: 40, color: Colors.white12,
     margin: const EdgeInsets.symmetric(horizontal: 4),
   );
 
@@ -920,10 +994,8 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
           width: size, height: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: filled
-                ? Colors.white
-                : active
-                ? Colors.white.withOpacity(0.2)
+            color: filled ? Colors.white
+                : active ? Colors.white.withOpacity(0.2)
                 : Colors.white.withOpacity(0.08),
             border: Border.all(color: Colors.white.withOpacity(filled ? 0 : 0.2)),
           ),

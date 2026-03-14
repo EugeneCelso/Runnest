@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:camera/camera.dart';
 import '../models/run_sessions.dart';
 import '../services/photo_overlay_service.dart';
+import '../services/storage_service.dart';
 import 'home_screen.dart';
 
 class SummaryScreen extends StatefulWidget {
@@ -18,14 +19,14 @@ class SummaryScreen extends StatefulWidget {
 
 class _SummaryScreenState extends State<SummaryScreen> {
   final _overlay = PhotoOverlayService();
+  final _storage = StorageService();
   bool _taking = false;
-  // Track whether camera has been init-checked
   bool _camReady = false;
+  bool _showPreview = false;
 
   @override
   void initState() {
     super.initState();
-    // Check camera state once after frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
@@ -37,7 +38,6 @@ class _SummaryScreenState extends State<SummaryScreen> {
 
   @override
   void dispose() {
-    // SummaryScreen owns the camera — dispose it here
     widget.cam?.dispose();
     super.dispose();
   }
@@ -61,7 +61,18 @@ class _SummaryScreenState extends State<SummaryScreen> {
       final xfile = await cam.takePicture();
       final path = await _overlay.burnOverlay(xfile.path, widget.session);
       if (path != null && mounted) {
-        setState(() => widget.session.photoPath = path);
+        // Update session in memory
+        widget.session.photoPath = path;
+        // Persist the updated session so photo shows in history
+        await _storage.updateSession(widget.session);
+        setState(() => _showPreview = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('📸 Photo saved!'),
+                duration: Duration(seconds: 2)),
+          );
+        }
       }
     } catch (e) {
       debugPrint('Summary photo error: $e');
@@ -90,7 +101,6 @@ class _SummaryScreenState extends State<SummaryScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF080808),
       body: CustomScrollView(slivers: [
-        // Map header
         SliverAppBar(
           expandedHeight: 300,
           pinned: true,
@@ -139,28 +149,20 @@ class _SummaryScreenState extends State<SummaryScreen> {
                 MarkerLayer(markers: [
                   if (s.routePoints.isNotEmpty) ...[
                     Marker(
-                      point: s.routePoints.first,
-                      width: 14,
-                      height: 14,
+                      point: s.routePoints.first, width: 14, height: 14,
                       child: Container(
                         decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                          border: Border.all(
-                              color: Colors.black54, width: 1.5),
+                          shape: BoxShape.circle, color: Colors.white,
+                          border: Border.all(color: Colors.black54, width: 1.5),
                         ),
                       ),
                     ),
                     Marker(
-                      point: s.routePoints.last,
-                      width: 14,
-                      height: 14,
+                      point: s.routePoints.last, width: 14, height: 14,
                       child: Container(
                         decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.grey.shade400,
-                          border: Border.all(
-                              color: Colors.black54, width: 1.5),
+                          shape: BoxShape.circle, color: Colors.grey.shade400,
+                          border: Border.all(color: Colors.black54, width: 1.5),
                         ),
                       ),
                     ),
@@ -180,7 +182,6 @@ class _SummaryScreenState extends State<SummaryScreen> {
           padding: const EdgeInsets.all(24),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
-              // Title
               Row(children: [
                 const Text('🎉', style: TextStyle(fontSize: 24)),
                 const SizedBox(width: 10),
@@ -192,11 +193,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
               ]),
               const SizedBox(height: 6),
               Text(_fmtDate(s.startTime),
-                  style: const TextStyle(
-                      color: Colors.white24, fontSize: 12)),
+                  style: const TextStyle(color: Colors.white24, fontSize: 12)),
               const SizedBox(height: 24),
 
-              // Stats grid
+              // Stats grid — 6 cards including steps + cadence
               GridView.count(
                 crossAxisCount: 2,
                 shrinkWrap: true,
@@ -207,12 +207,14 @@ class _SummaryScreenState extends State<SummaryScreen> {
                 children: [
                   _card('Distance', '${s.formattedDistance} km',
                       Icons.straighten),
-                  _card('Time', s.formattedTime,
-                      Icons.timer_outlined),
+                  _card('Time', s.formattedTime, Icons.timer_outlined),
                   _card('Avg Pace', '${s.formattedPace} /km',
                       Icons.speed_outlined),
                   _card('Calories', s.estimatedCalories,
                       Icons.local_fire_department_outlined),
+                  _card('Steps', s.steps > 0 ? s.formattedSteps : '--',
+                      Icons.directions_walk_outlined),
+                  _card('Cadence', _cadence(s), Icons.av_timer_outlined),
                 ],
               ),
               const SizedBox(height: 24),
@@ -221,7 +223,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
               _photoSection(s),
               const SizedBox(height: 32),
 
-              // Done button
+              // Done
               GestureDetector(
                 onTap: _goHome,
                 child: Container(
@@ -236,8 +238,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                     boxShadow: [
                       BoxShadow(
                         color: Colors.white.withOpacity(0.2),
-                        blurRadius: 20,
-                        spreadRadius: 2,
+                        blurRadius: 20, spreadRadius: 2,
                       )
                     ],
                   ),
@@ -274,113 +275,171 @@ class _SummaryScreenState extends State<SummaryScreen> {
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(value,
               style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
+                  color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           Text(label,
-              style: const TextStyle(
-                  color: Colors.white38, fontSize: 11)),
+              style: const TextStyle(color: Colors.white38, fontSize: 11)),
         ]),
       ],
     ),
   );
 
   Widget _photoSection(RunSession s) {
-    // Already have a photo
+    // ── Photo already taken ───────────────────────────────────────────
     if (s.photoPath != null) {
-      return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Run Photo',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16)),
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Image.file(File(s.photoPath!),
-                  width: double.infinity, fit: BoxFit.cover),
-            ),
-            const SizedBox(height: 8),
-            const Text('Stats & route overlaid on photo',
-                style: TextStyle(color: Colors.white24, fontSize: 11)),
-          ]);
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Run Photo',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+        const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Image.file(File(s.photoPath!),
+              width: double.infinity, fit: BoxFit.cover),
+        ),
+        const SizedBox(height: 8),
+        const Text('Stats & route overlaid on photo',
+            style: TextStyle(color: Colors.white24, fontSize: 11)),
+      ]);
     }
 
-    // Camera available — offer photo
+    // ── Camera available ──────────────────────────────────────────────
     if (_camReady && widget.cam != null) {
-      return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Capture the moment',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16)),
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Stack(alignment: Alignment.center, children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: 220,
-                  child: CameraPreview(widget.cam!),
-                ),
-                // Gradient overlay
-                Container(
-                  width: double.infinity,
-                  height: 220,
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Capture the moment',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+        const SizedBox(height: 12),
+
+        if (_showPreview) ...[
+          // Full-width tall preview
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Stack(children: [
+              AspectRatio(
+                aspectRatio: 3 / 4,
+                child: CameraPreview(widget.cam!),
+              ),
+              // Bottom gradient
+              Positioned(
+                bottom: 0, left: 0, right: 0,
+                child: Container(
+                  height: 130,
                   decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.vertical(
+                        bottom: Radius.circular(18)),
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
                         Colors.transparent,
-                        Colors.black.withOpacity(0.4)
+                        Colors.black.withOpacity(0.78),
                       ],
                     ),
                   ),
                 ),
-                if (_taking)
-                  const CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2)
-                else
-                  GestureDetector(
+              ),
+              // Shutter
+              Positioned(
+                bottom: 28, left: 0, right: 0,
+                child: Center(
+                  child: _taking
+                      ? const SizedBox(
+                    width: 76, height: 76,
+                    child: CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2.5),
+                  )
+                      : GestureDetector(
                     onTap: _takeFinishPhoto,
                     child: Container(
-                      width: 64,
-                      height: 64,
+                      width: 80, height: 80,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: Colors.white,
-                        border: Border.all(
-                            color: Colors.black26, width: 2),
+                        border: Border.all(color: Colors.black26, width: 3),
                         boxShadow: [
                           BoxShadow(
-                              color: Colors.white.withOpacity(0.3),
-                              blurRadius: 16)
+                              color: Colors.white.withOpacity(0.35),
+                              blurRadius: 22,
+                              spreadRadius: 2)
                         ],
                       ),
                       child: const Icon(Icons.camera_alt,
-                          color: Colors.black, size: 30),
+                          color: Colors.black, size: 36),
                     ),
                   ),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: () => setState(() => _showPreview = false),
+            child: const Center(
+              child: Text('Cancel',
+                  style: TextStyle(color: Colors.white38, fontSize: 13)),
+            ),
+          ),
+        ] else ...[
+          // Wide open-camera button
+          GestureDetector(
+            onTap: () => setState(() => _showPreview = true),
+            child: Container(
+              width: double.infinity,
+              height: 72,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                color: const Color(0xFF111111),
+                border: Border.all(color: Colors.white.withOpacity(0.15)),
+              ),
+              child: Row(children: [
+                const SizedBox(width: 20),
+                Container(
+                  width: 42, height: 42,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.1),
+                  ),
+                  child: const Icon(Icons.camera_alt_outlined,
+                      color: Colors.white70, size: 20),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Open Camera',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15)),
+                      Text('Photo will include stats + route overlay',
+                          style: TextStyle(color: Colors.white38, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: Colors.white24, size: 22),
+                const SizedBox(width: 16),
               ]),
             ),
-            const SizedBox(height: 8),
-            const Text('Photo will include stats + route overlay',
-                style: TextStyle(color: Colors.white24, fontSize: 11)),
-          ]);
+          ),
+        ],
+      ]);
     }
 
     return const SizedBox.shrink();
   }
 
+  String _cadence(RunSession s) {
+    if (s.elapsed.inSeconds < 10 || s.steps == 0) return '--';
+    final spm = (s.steps / (s.elapsed.inSeconds / 60)).round();
+    return '$spm spm';
+  }
+
   String _fmtDate(DateTime dt) {
     const m = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec'
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
     return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  •  '
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';

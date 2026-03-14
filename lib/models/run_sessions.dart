@@ -10,6 +10,7 @@ class RunSession {
   Duration elapsed;
   double pacePerKm;
   String? photoPath;
+  int steps;
 
   RunSession({
     required this.id,
@@ -20,6 +21,7 @@ class RunSession {
     Duration? elapsed,
     this.pacePerKm = 0,
     this.photoPath,
+    this.steps = 0,
   })  : routePoints = routePoints ?? [],
         elapsed = elapsed ?? Duration.zero;
 
@@ -42,6 +44,13 @@ class RunSession {
 
   String get estimatedCalories => '${(distanceKm * 62).round()} kcal';
 
+  String get formattedSteps {
+    if (steps >= 1000) {
+      return '${(steps / 1000).toStringAsFixed(1)}k';
+    }
+    return '$steps';
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'startTime': startTime.toIso8601String(),
@@ -50,6 +59,7 @@ class RunSession {
     'elapsedSeconds': elapsed.inSeconds,
     'pacePerKm': pacePerKm,
     'photoPath': photoPath,
+    'steps': steps,
     'routePoints': routePoints
         .map((p) => {'lat': p.latitude, 'lng': p.longitude})
         .toList(),
@@ -63,6 +73,7 @@ class RunSession {
     elapsed: Duration(seconds: j['elapsedSeconds'] as int),
     pacePerKm: (j['pacePerKm'] as num).toDouble(),
     photoPath: j['photoPath'],
+    steps: (j['steps'] as num?)?.toInt() ?? 0,
     routePoints: (j['routePoints'] as List)
         .map((p) => LatLng(
         (p['lat'] as num).toDouble(),

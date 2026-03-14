@@ -21,6 +21,20 @@ class StorageService {
     await prefs.setStringList(_key, raw);
   }
 
+  /// Update an existing session in place (e.g. after adding a photo)
+  Future<void> updateSession(RunSession session) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_key) ?? [];
+    final updated = raw.map((s) {
+      final decoded = jsonDecode(s) as Map<String, dynamic>;
+      if (decoded['id'] == session.id) {
+        return jsonEncode(session.toJson());
+      }
+      return s;
+    }).toList();
+    await prefs.setStringList(_key, updated);
+  }
+
   Future<void> deleteSession(String id) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_key) ?? [];

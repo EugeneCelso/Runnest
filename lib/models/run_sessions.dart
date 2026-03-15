@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:latlong2/latlong.dart';
 
 class RunSession {
@@ -45,10 +44,22 @@ class RunSession {
   String get estimatedCalories => '${(distanceKm * 62).round()} kcal';
 
   String get formattedSteps {
-    if (steps >= 1000) {
-      return '${(steps / 1000).toStringAsFixed(1)}k';
-    }
+    if (steps >= 1000) return '${(steps / 1000).toStringAsFixed(1)}k';
     return '$steps';
+  }
+
+  // Steps per minute — used in history cards and summary screen
+  String get formattedCadence {
+    if (elapsed.inSeconds < 10 || steps == 0) return '--';
+    final spm = (steps / (elapsed.inSeconds / 60)).round();
+    return '$spm spm';
+  }
+
+  // Average speed in km/h — used in run detail screen
+  String get formattedAvgSpeed {
+    if (elapsed.inSeconds == 0) return '0.0 km/h';
+    final kmh = distanceKm / (elapsed.inSeconds / 3600);
+    return '${kmh.toStringAsFixed(1)} km/h';
   }
 
   Map<String, dynamic> toJson() => {
@@ -68,7 +79,8 @@ class RunSession {
   factory RunSession.fromJson(Map<String, dynamic> j) => RunSession(
     id: j['id'],
     startTime: DateTime.parse(j['startTime']),
-    endTime: j['endTime'] != null ? DateTime.parse(j['endTime']) : null,
+    endTime:
+    j['endTime'] != null ? DateTime.parse(j['endTime']) : null,
     distanceKm: (j['distanceKm'] as num).toDouble(),
     elapsed: Duration(seconds: j['elapsedSeconds'] as int),
     pacePerKm: (j['pacePerKm'] as num).toDouble(),
@@ -76,8 +88,9 @@ class RunSession {
     steps: (j['steps'] as num?)?.toInt() ?? 0,
     routePoints: (j['routePoints'] as List)
         .map((p) => LatLng(
-        (p['lat'] as num).toDouble(),
-        (p['lng'] as num).toDouble()))
+      (p['lat'] as num).toDouble(),
+      (p['lng'] as num).toDouble(),
+    ))
         .toList(),
   );
 }

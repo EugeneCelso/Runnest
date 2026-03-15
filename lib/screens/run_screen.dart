@@ -40,6 +40,9 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
   bool _camSetupInProgress = false;
   bool _camTransferred = false;
 
+  // When true, the next successful photo triggers _stopRun() automatically
+  bool _pendingFinish = false;
+
   bool _isRunning = false;
   bool _isPaused = false;
   bool _ready = false;
@@ -290,9 +293,23 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
       final overlayPath = await _overlay.burnOverlay(xfile.path, _session);
       if (overlayPath != null && mounted) {
         _session.photoPath = overlayPath;
-        _snack('📸 Photo saved!');
-        setState(() { _camVisible = false; _camExpanded = false; _flashOn = false; });
+        setState(() {
+          _camVisible = false;
+          _camExpanded = false;
+          _flashOn = false;
+        });
         _camExpandCtrl.reverse();
+        _cam?.setFlashMode(FlashMode.off).catchError((_) {});
+
+        if (_pendingFinish) {
+          // User took the end-of-run photo → finish the run automatically
+          _pendingFinish = false;
+          await _stopRun();
+        } else {
+          _snack('📸 Photo saved!');
+        }
+      } else if (mounted) {
+        _snack('Photo processing failed — please retry');
       }
     } catch (e) {
       _snack('Camera error — please retry');
@@ -357,9 +374,14 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
         ),
       );
       if (takePhoto == true && mounted) {
-        setState(() { _camVisible = true; _camExpanded = true; });
+        // Flag that the next photo should trigger auto-finish
+        _pendingFinish = true;
+        setState(() {
+          _camVisible = true;
+          _camExpanded = true;
+        });
         _camExpandCtrl.forward();
-        _snack('Take your photo, then tap ✓ Finish Run');
+        _snack('Take your photo — run will finish automatically');
         return;
       }
     }
@@ -599,6 +621,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                 if (!_camVisible) {
                   _camExpanded = false;
                   _flashOn = false;
+                  _pendingFinish = false; // cancel pending finish if camera dismissed
                   _camExpandCtrl.reverse();
                   _cam?.setFlashMode(FlashMode.off).catchError((_) {});
                 }
@@ -720,6 +743,23 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                     ),
                   ),
 
+                // Pending finish indicator
+                if (_pendingFinish)
+                  Positioned(
+                    top: 8, right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white30),
+                      ),
+                      child: const Text('FINISHING',
+                          style: TextStyle(color: Colors.white,
+                              fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                    ),
+                  ),
+
                 Positioned(
                   bottom: 0, left: 0, right: 0,
                   child: Container(
@@ -762,7 +802,12 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                         _camExpanded ? Icons.fullscreen_exit : Icons.close,
                         _camExpanded ? _toggleCamExpand : () {
                           if (_flashOn) _cam?.setFlashMode(FlashMode.off).catchError((_) {});
-                          setState(() { _camVisible = false; _camExpanded = false; _flashOn = false; });
+                          setState(() {
+                            _camVisible = false;
+                            _camExpanded = false;
+                            _flashOn = false;
+                            _pendingFinish = false; // cancel if user manually closes
+                          });
                           _camExpandCtrl.reverse();
                         },
                         size: _camExpanded ? 48 : 36,
@@ -903,6 +948,7 @@ class _RunScreenState extends State<RunScreen> with TickerProviderStateMixin {
                 if (!_camVisible) {
                   _camExpanded = false;
                   _flashOn = false;
+                  _pendingFinish = false;
                   _camExpandCtrl.reverse();
                   _cam?.setFlashMode(FlashMode.off).catchError((_) {});
                 }

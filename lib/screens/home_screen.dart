@@ -1,20 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/run_sessions.dart';
-import '../services/storage_service.dart';
+import '../providers/sessions_provider.dart';
 import 'run_screen.dart';
 import 'history_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+// ConsumerStatefulWidget instead of StatefulWidget — gives us `ref`
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
+class _HomeScreenState extends ConsumerState<HomeScreen>
     with SingleTickerProviderStateMixin {
   int _tab = 0;
-  List<RunSession> _sessions = [];
-  final _storage = StorageService();
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
 
@@ -25,7 +25,7 @@ class _HomeScreenState extends State<HomeScreen>
         vsync: this, duration: const Duration(milliseconds: 500));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeIn);
     _animCtrl.forward();
-    _load();
+    // No more _load() — provider loads automatically
   }
 
   @override
@@ -34,106 +34,111 @@ class _HomeScreenState extends State<HomeScreen>
     super.dispose();
   }
 
-  Future<void> _load() async {
-    final s = await _storage.loadSessions();
-    if (mounted) setState(() => _sessions = s);
-  }
+  // ── Computed stats ───────────────────────────────────────────────
+  double _totalKm(List<RunSession> s) =>
+      s.fold(0.0, (sum, r) => sum + r.distanceKm);
 
-  double get _totalKm =>
-      _sessions.fold(0.0, (sum, s) => sum + s.distanceKm);
+  int _totalSteps(List<RunSession> s) =>
+      s.fold(0, (sum, r) => sum + r.steps);
 
-  int get _totalSteps =>
-      _sessions.fold(0, (sum, s) => sum + s.steps);
+  int _totalCalories(List<RunSession> s) =>
+      s.fold(0, (sum, r) => sum + (r.distanceKm * 62).round());
 
-  int get _totalCalories =>
-      _sessions.fold(0, (sum, s) => sum + (s.distanceKm * 62).round());
+  Duration _totalTime(List<RunSession> s) =>
+      s.fold(Duration.zero, (sum, r) => sum + r.elapsed);
 
-  Duration get _totalTime =>
-      _sessions.fold(Duration.zero, (sum, s) => sum + s.elapsed);
-
-  String get _avgPace {
-    final valid = _sessions.where((s) => s.pacePerKm > 0).toList();
+  String _avgPace(List<RunSession> s) {
+    final valid = s.where((r) => r.pacePerKm > 0).toList();
     if (valid.isEmpty) return '--:--';
     final avg =
-        valid.fold(0.0, (sum, s) => sum + s.pacePerKm) / valid.length;
+        valid.fold(0.0, (sum, r) => sum + r.pacePerKm) / valid.length;
     final m = (avg / 60).floor();
-    final s = (avg % 60).round();
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    final sec = (avg % 60).round();
+    return '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
-  String get _bestPace {
-    final valid = _sessions.where((s) => s.pacePerKm > 0).toList();
+  String _bestPace(List<RunSession> s) {
+    final valid = s.where((r) => r.pacePerKm > 0).toList();
     if (valid.isEmpty) return '--:--';
     final best =
-    valid.map((s) => s.pacePerKm).reduce((a, b) => a < b ? a : b);
+    valid.map((r) => r.pacePerKm).reduce((a, b) => a < b ? a : b);
     final m = (best / 60).floor();
-    final s = (best % 60).round();
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    final sec = (best % 60).round();
+    return '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
-  String get _longestRun {
-    if (_sessions.isEmpty) return '0.00';
-    return _sessions
-        .map((s) => s.distanceKm)
+  String _longestRun(List<RunSession> s) {
+    if (s.isEmpty) return '0.00';
+    return s
+        .map((r) => r.distanceKm)
         .reduce((a, b) => a > b ? a : b)
         .toStringAsFixed(2);
   }
 
-  String get _formattedTotalTime {
-    final h = _totalTime.inHours;
-    final m = _totalTime.inMinutes.remainder(60);
+  String _fmtTime(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
     if (h > 0) return '${h}h ${m}m';
     return '${m}m';
   }
 
-  String get _formattedTotalSteps {
-    if (_totalSteps >= 1000)
-      return '${(_totalSteps / 1000).toStringAsFixed(1)}k';
-    return '$_totalSteps';
-  }
+  String _fmtSteps(int steps) =>
+      steps >= 1000 ? '${(steps / 1000).toStringAsFixed(1)}k' : '$steps';
 
-  String get _formattedTotalCalories {
-    if (_totalCalories >= 1000)
-      return '${(_totalCalories / 1000).toStringAsFixed(1)}k';
-    return '$_totalCalories';
-  }
+  String _fmtCal(int cal) =>
+      cal >= 1000 ? '${(cal / 1000).toStringAsFixed(1)}k' : '$cal';
 
-  double get _weekKm {
+  double _weekKm(List<RunSession> s) {
     final now = DateTime.now();
-    final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
-    return _sessions
-        .where((s) => s.startTime.isAfter(start))
-        .fold(0.0, (sum, s) => sum + s.distanceKm);
+    final start = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    return s
+        .where((r) => r.startTime.isAfter(start))
+        .fold(0.0, (sum, r) => sum + r.distanceKm);
   }
 
-  int get _weekRuns {
+  int _weekRuns(List<RunSession> s) {
     final now = DateTime.now();
-    final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
-    return _sessions.where((s) => s.startTime.isAfter(start)).length;
+    final start = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    return s.where((r) => r.startTime.isAfter(start)).length;
   }
 
   @override
   Widget build(BuildContext context) {
+    // Watch provider — rebuilds automatically when sessions change
+    final sessionsAsync = ref.watch(sessionsProvider);
+
     return Scaffold(
       backgroundColor: const Color(0xFF080808),
       body: FadeTransition(
         opacity: _fadeAnim,
-        child: _tab == 0
-            ? _buildHome()
-            : HistoryScreen(
-            sessions: _sessions,
-            onDelete: (id) async {
-              await _storage.deleteSession(id);
-              _load();
-            }),
+        child: sessionsAsync.when(
+          loading: () => const Center(
+              child: CircularProgressIndicator(
+                  color: Colors.white38, strokeWidth: 1.5)),
+          error: (e, _) => Center(
+              child: Text('Error: $e',
+                  style: const TextStyle(color: Colors.white38))),
+          data: (sessions) => _tab == 0
+              ? _buildHome(sessions)
+              : HistoryScreen(
+            sessions: sessions,
+            onDelete: (id) =>
+                ref.read(sessionsProvider.notifier).deleteSession(id),
+          ),
+        ),
       ),
       bottomNavigationBar: _buildNav(),
     );
   }
 
-  Widget _buildHome() {
+  Widget _buildHome(List<RunSession> sessions) {
+    final km = _totalKm(sessions);
+    final steps = _totalSteps(sessions);
+    final cal = _totalCalories(sessions);
+    final time = _totalTime(sessions);
+    final wKm = _weekKm(sessions);
+    final wRuns = _weekRuns(sessions);
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -164,9 +169,9 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _sessions.isEmpty
+                          sessions.isEmpty
                               ? 'Ready to run?'
-                              : '${_sessions.length} run${_sessions.length == 1 ? '' : 's'} logged',
+                              : '${sessions.length} run${sessions.length == 1 ? '' : 's'} logged',
                           style: const TextStyle(
                               color: Colors.white38, fontSize: 12),
                         ),
@@ -193,7 +198,7 @@ class _HomeScreenState extends State<HomeScreen>
             const SizedBox(height: 16),
 
             // ── This week pill ───────────────────────────────────────
-            if (_sessions.isNotEmpty) ...[
+            if (sessions.isNotEmpty) ...[
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
@@ -212,79 +217,50 @@ class _HomeScreenState extends State<HomeScreen>
                       style: TextStyle(
                           color: Colors.white38, fontSize: 12)),
                   const Spacer(),
-                  Text('${_weekKm.toStringAsFixed(1)} km',
+                  Text('${wKm.toStringAsFixed(1)} km',
                       style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
                           fontSize: 13)),
                   const SizedBox(width: 6),
-                  Text(
-                      '· $_weekRuns run${_weekRuns == 1 ? '' : 's'}',
+                  Text('· $wRuns run${wRuns == 1 ? '' : 's'}',
                       style: const TextStyle(
                           color: Colors.white38, fontSize: 12)),
                 ]),
               ),
               const SizedBox(height: 12),
 
-              // ── Stats grid: 2 columns, medium cards ─────────────
-              // Row 1
+              // ── Stats grid ───────────────────────────────────────
               Row(children: [
-                _statCard(
-                  '${_totalKm.toStringAsFixed(1)} km',
-                  'Total Distance',
-                  Icons.route_outlined,
-                ),
+                _statCard('${km.toStringAsFixed(1)} km', 'Total Distance',
+                    Icons.route_outlined),
                 const SizedBox(width: 10),
-                _statCard(
-                  '$_avgPace /km',
-                  'Avg Pace',
-                  Icons.speed_outlined,
-                ),
+                _statCard('${_avgPace(sessions)} /km', 'Avg Pace',
+                    Icons.speed_outlined),
               ]),
               const SizedBox(height: 10),
-              // Row 2
               Row(children: [
-                _statCard(
-                  _formattedTotalSteps,
-                  'Total Steps',
-                  Icons.directions_walk_outlined,
-                ),
+                _statCard(_fmtSteps(steps), 'Total Steps',
+                    Icons.directions_walk_outlined),
                 const SizedBox(width: 10),
-                _statCard(
-                  '$_formattedTotalCalories kcal',
-                  'Calories Burned',
-                  Icons.local_fire_department_outlined,
-                ),
+                _statCard('${_fmtCal(cal)} kcal', 'Calories Burned',
+                    Icons.local_fire_department_outlined),
               ]),
               const SizedBox(height: 10),
-              // Row 3
               Row(children: [
-                _statCard(
-                  '$_bestPace /km',
-                  'Best Pace',
-                  Icons.emoji_events_outlined,
-                ),
+                _statCard('${_bestPace(sessions)} /km', 'Best Pace',
+                    Icons.emoji_events_outlined),
                 const SizedBox(width: 10),
-                _statCard(
-                  '$_longestRun km',
-                  'Longest Run',
-                  Icons.straighten_outlined,
-                ),
+                _statCard('${_longestRun(sessions)} km', 'Longest Run',
+                    Icons.straighten_outlined),
               ]),
               const SizedBox(height: 10),
-              // Row 4
               Row(children: [
-                _statCard(
-                  _formattedTotalTime,
-                  'Total Time',
-                  Icons.timer_outlined,
-                ),
+                _statCard(_fmtTime(time), 'Total Time',
+                    Icons.timer_outlined),
                 const SizedBox(width: 10),
-                _statCard(
-                  '${_sessions.length}',
-                  'Total Runs',
-                  Icons.replay_outlined,
-                ),
+                _statCard('${sessions.length}', 'Total Runs',
+                    Icons.replay_outlined),
               ]),
               const SizedBox(height: 20),
             ] else
@@ -297,7 +273,8 @@ class _HomeScreenState extends State<HomeScreen>
                     context,
                     MaterialPageRoute(
                         builder: (_) => const RunScreen()));
-                _load();
+                // Reload after returning — replaces the old _load() call
+                ref.read(sessionsProvider.notifier).reload();
               },
               child: Container(
                 width: double.infinity,
@@ -330,10 +307,7 @@ class _HomeScreenState extends State<HomeScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: const LinearGradient(
-                              colors: [
-                                Colors.white,
-                                Color(0xFFBBBBBB)
-                              ],
+                              colors: [Colors.white, Color(0xFFBBBBBB)],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
@@ -366,7 +340,7 @@ class _HomeScreenState extends State<HomeScreen>
             const SizedBox(height: 22),
 
             // ── Recent runs ──────────────────────────────────────────
-            if (_sessions.isNotEmpty) ...[
+            if (sessions.isNotEmpty) ...[
               Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -383,7 +357,7 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ]),
               const SizedBox(height: 10),
-              ..._sessions.take(3).map((s) => _recentCard(s)),
+              ...sessions.take(3).map((s) => _recentCard(s)),
             ],
             const SizedBox(height: 20),
           ],
@@ -392,7 +366,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// Medium card — 2 per row, icon + large value + label
   Widget _statCard(String value, String label, IconData icon) => Expanded(
     child: Container(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
@@ -491,10 +464,7 @@ class _HomeScreenState extends State<HomeScreen>
     ),
     child: BottomNavigationBar(
       currentIndex: _tab,
-      onTap: (i) {
-        setState(() => _tab = i);
-        if (i == 1) _load();
-      },
+      onTap: (i) => setState(() => _tab = i),
       backgroundColor: Colors.transparent,
       selectedItemColor: Colors.white,
       unselectedItemColor: Colors.white24,

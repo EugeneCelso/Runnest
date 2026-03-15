@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/home_screen.dart';
 
 void main() async {
@@ -9,7 +10,12 @@ void main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
-  runApp(const RunneStApp());
+  runApp(
+    // Only change: wrap with ProviderScope
+    const ProviderScope(
+      child: RunneStApp(),
+    ),
+  );
 }
 
 class RunneStApp extends StatelessWidget {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart' as path_provider;
@@ -22,10 +23,9 @@ class PhotoOverlayService {
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, w, h));
 
-      // Draw source image
       canvas.drawImage(srcImage, Offset.zero, Paint());
 
-      // Dark gradient at bottom for readability
+      // Dark gradient at bottom
       final gradPaint = Paint()
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
@@ -34,15 +34,11 @@ class PhotoOverlayService {
         ).createShader(Rect.fromLTWH(0, h * 0.42, w, h * 0.58));
       canvas.drawRect(Rect.fromLTWH(0, h * 0.42, w, h * 0.58), gradPaint);
 
-      // Route mini-map — transparent background, just the polyline
       if (session.routePoints.length > 1) {
         _drawMiniPolyline(canvas, session.routePoints, w, h);
       }
 
-      // Stats text
       _drawStats(canvas, session, w, h);
-
-      // Watermark
       _drawWatermark(canvas, w, h);
 
       final picture = recorder.endRecording();
@@ -64,6 +60,7 @@ class PhotoOverlayService {
 
   void _drawMiniPolyline(
       Canvas canvas, List<LatLng> points, double w, double h) {
+    // ── Bounding box ───────────────────────────────────────────────
     double minLat = points.first.latitude, maxLat = points.first.latitude;
     double minLng = points.first.longitude, maxLng = points.first.longitude;
 
@@ -74,70 +71,95 @@ class PhotoOverlayService {
       if (p.longitude > maxLng) maxLng = p.longitude;
     }
 
-    final mapW = w * 0.28;
-    final mapH = h * 0.20;
+    // Drawing area — centred at top of image
+    final mapW = w * 0.38;
+    final mapH = h * 0.28;
     final mapLeft = (w - mapW) / 2;
-    final mapTop = h * 0.05;
-    const padding = 18.0;
+    final mapTop = h * 0.04;
+    const padding = 20.0;
 
-    final latRange = (maxLat - minLat).abs() < 1e-6 ? 0.001 : (maxLat - minLat).abs();
-    final lngRange = (maxLng - minLng).abs() < 1e-6 ? 0.001 : (maxLng - minLng).abs();
+    final innerW = mapW - padding * 2;
+    final innerH = mapH - padding * 2;
+
+    final latRange =
+    (maxLat - minLat).abs() < 1e-6 ? 0.001 : (maxLat - minLat).abs();
+    final lngRange =
+    (maxLng - minLng).abs() < 1e-6 ? 0.001 : (maxLng - minLng).abs();
+
+    // ── Convert to metres so both axes are comparable ──────────────
+    // 1° lat ≈ 111 000 m (constant everywhere)
+    // 1° lng ≈ 111 000 * cos(latitude) m
+    final midLat = (minLat + maxLat) / 2;
+    final latMetres = latRange * 111000.0;
+    final lngMetres = lngRange * 111000.0 * math.cos(midLat * math.pi / 180);
+
+    // ── Uniform scale — fit the LARGER dimension, preserve shape ───
+    final scaleX = lngMetres > 0 ? innerW / lngMetres : 1.0;
+    final scaleY = latMetres > 0 ? innerH / latMetres : 1.0;
+    final scale = math.min(scaleX, scaleY);
+
+    final routePixelW = lngMetres * scale;
+    final routePixelH = latMetres * scale;
+
+    // Centre the route in the box
+    final offsetX = mapLeft + padding + (innerW - routePixelW) / 2;
+    final offsetY = mapTop + padding + (innerH - routePixelH) / 2;
 
     Offset toOffset(LatLng p) {
-      final x = mapLeft + padding + ((p.longitude - minLng) / lngRange) * (mapW - padding * 2);
-      final y = mapTop + padding + ((maxLat - p.latitude) / latRange) * (mapH - padding * 2);
-      return Offset(x, y);
+      final dx = ((p.longitude - minLng) / lngRange) * lngMetres * scale;
+      final dy = ((maxLat - p.latitude) / latRange) * latMetres * scale;
+      return Offset(offsetX + dx, offsetY + dy);
     }
 
-    // NO background pill — fully transparent behind the route line.
-    // A very subtle dark blur-shadow is drawn under the line for visibility
-    // against both light and dark parts of the photo.
-
-    // Build the route path
+    // ── Draw path ──────────────────────────────────────────────────
     final routePath = ui.Path();
     routePath.moveTo(toOffset(points.first).dx, toOffset(points.first).dy);
     for (final p in points.skip(1)) {
       routePath.lineTo(toOffset(p).dx, toOffset(p).dy);
     }
 
-    // Wide, semi-transparent dark shadow for contrast on any background
-    final shadowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.45)
-      ..strokeWidth = w * 0.012
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..style = PaintingStyle.stroke
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-    canvas.drawPath(routePath, shadowPaint);
+    // Shadow
+    canvas.drawPath(
+      routePath,
+      Paint()
+        ..color = Colors.black.withOpacity(0.45)
+        ..strokeWidth = w * 0.012
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+    );
 
-    // White route line
-    final linePaint = Paint()
-      ..color = Colors.white.withOpacity(0.92)
-      ..strokeWidth = w * 0.005
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..style = PaintingStyle.stroke;
-    canvas.drawPath(routePath, linePaint);
+    // White line
+    canvas.drawPath(
+      routePath,
+      Paint()
+        ..color = Colors.white.withOpacity(0.92)
+        ..strokeWidth = w * 0.005
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke,
+    );
 
-    // Start dot (white filled)
+    // Start dot
     canvas.drawCircle(
-      toOffset(points.first),
-      w * 0.012,
+      toOffset(points.first), w * 0.012,
       Paint()
         ..color = Colors.black.withOpacity(0.4)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
     );
-    canvas.drawCircle(toOffset(points.first), w * 0.010, Paint()..color = Colors.white);
-
-    // End dot (grey)
     canvas.drawCircle(
-      toOffset(points.last),
-      w * 0.012,
+        toOffset(points.first), w * 0.010, Paint()..color = Colors.white);
+
+    // End dot
+    canvas.drawCircle(
+      toOffset(points.last), w * 0.012,
       Paint()
         ..color = Colors.black.withOpacity(0.4)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
     );
-    canvas.drawCircle(toOffset(points.last), w * 0.010, Paint()..color = Colors.grey.shade400);
+    canvas.drawCircle(toOffset(points.last), w * 0.010,
+        Paint()..color = Colors.grey.shade400);
   }
 
   void _drawStats(Canvas canvas, RunSession session, double w, double h) {
@@ -146,24 +168,28 @@ class PhotoOverlayService {
     final valueSize = w * 0.054;
     final labelSize = w * 0.028;
 
-    _drawText(canvas, 'DISTANCE', colW * 0, statY, colW, labelSize, Colors.white54);
+    _drawText(canvas, 'DISTANCE', colW * 0, statY, colW, labelSize,
+        Colors.white54);
     _drawText(canvas, '${session.formattedDistance} km', colW * 0,
         statY + labelSize * 1.6, colW, valueSize, Colors.white, bold: true);
 
-    _drawText(canvas, 'PACE', colW * 1, statY, colW, labelSize, Colors.white54);
+    _drawText(
+        canvas, 'PACE', colW * 1, statY, colW, labelSize, Colors.white54);
     _drawText(canvas, '${session.formattedPace} /km', colW * 1,
         statY + labelSize * 1.6, colW, valueSize, Colors.white, bold: true);
 
-    _drawText(canvas, 'TIME', colW * 2, statY, colW, labelSize, Colors.white54);
+    _drawText(
+        canvas, 'TIME', colW * 2, statY, colW, labelSize, Colors.white54);
     _drawText(canvas, session.formattedTime, colW * 2,
         statY + labelSize * 1.6, colW, valueSize, Colors.white, bold: true);
 
-    // Dividers
     final divPaint = Paint()
       ..color = Colors.white24
       ..strokeWidth = 1;
-    canvas.drawLine(Offset(colW, statY - 8), Offset(colW, h * 0.89), divPaint);
-    canvas.drawLine(Offset(colW * 2, statY - 8), Offset(colW * 2, h * 0.89), divPaint);
+    canvas.drawLine(
+        Offset(colW, statY - 8), Offset(colW, h * 0.89), divPaint);
+    canvas.drawLine(
+        Offset(colW * 2, statY - 8), Offset(colW * 2, h * 0.89), divPaint);
   }
 
   void _drawText(

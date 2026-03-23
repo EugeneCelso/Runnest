@@ -21,7 +21,6 @@ class StorageService {
     await prefs.setStringList(_key, raw);
   }
 
-  /// Update an existing session in place (e.g. after adding a photo)
   Future<void> updateSession(RunSession session) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_key) ?? [];

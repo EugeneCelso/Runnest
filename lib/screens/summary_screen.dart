@@ -1,5 +1,6 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,6 +8,7 @@ import 'package:camera/camera.dart';
 import '../models/run_sessions.dart';
 import '../providers/sessions_provider.dart';
 import 'home_screen.dart';
+import 'ios_icons.dart';
 
 class SummaryScreen extends ConsumerStatefulWidget {
   final RunSession session;
@@ -18,11 +20,9 @@ class SummaryScreen extends ConsumerStatefulWidget {
 }
 
 class _SummaryScreenState extends ConsumerState<SummaryScreen> {
-
   @override
   void initState() {
     super.initState();
-    // Dispose the passed-in controller — we don't use it here
     widget.cam?.dispose();
   }
 
@@ -35,236 +35,406 @@ class _SummaryScreenState extends ConsumerState<SummaryScreen> {
     );
   }
 
-  void _goHome() {
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (_) => false,
-    );
+  void _goHome() => Navigator.pushAndRemoveUntil(
+    context,
+    CupertinoPageRoute(builder: (_) => const HomeScreen()),
+        (_) => false,
+  );
+
+  Future<void> _sharePhoto(String path) async {
+    try {
+      await Share.shareXFiles(
+        [XFile(path)],
+        text: 'My run with RUNNE\$T 🏃',
+      );
+    } catch (e) {
+      debugPrint('Share error: \$e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final s = widget.session;
-    return Scaffold(
+    final topPad = MediaQuery.of(context).padding.top;
+
+    return CupertinoPageScaffold(
       backgroundColor: const Color(0xFF080808),
-      body: CustomScrollView(slivers: [
-        SliverAppBar(
-          expandedHeight: 300,
-          pinned: true,
-          backgroundColor: const Color(0xFF080808),
-          leading: GestureDetector(
-            onTap: _goHome,
-            child: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-          ),
-          title: const Text('RUNNE\$T',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 2,
-                  fontSize: 16)),
-          flexibleSpace: FlexibleSpaceBar(
-            background: s.routePoints.isNotEmpty
-                ? FlutterMap(
-              options: MapOptions(
-                initialCenter: _center,
-                initialZoom: 14,
-                interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.none),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate:
-                  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                  subdomains: const ['a', 'b', 'c', 'd'],
-                  userAgentPackageName: 'com.example.runnest',
+      child: Column(children: [
+        // ── Fixed map header ──────────────────────────────────────
+        SizedBox(
+          height: 280 + topPad,
+          child: Stack(children: [
+            Positioned.fill(
+              child: s.routePoints.isNotEmpty
+                  ? FlutterMap(
+                options: MapOptions(
+                  initialCenter: _center,
+                  initialZoom: 14,
+                  interactionOptions: const InteractionOptions(
+                      flags: InteractiveFlag.none),
                 ),
-                if (s.routePoints.length > 1)
-                  PolylineLayer(polylines: [
-                    Polyline(
-                      points: s.routePoints,
-                      color: Colors.black.withOpacity(0.5),
-                      strokeWidth: 8,
-                      strokeCap: StrokeCap.round,
-                    ),
-                    Polyline(
-                      points: s.routePoints,
-                      color: Colors.white,
-                      strokeWidth: 4,
-                      strokeCap: StrokeCap.round,
-                    ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                    subdomains: const ['a', 'b', 'c', 'd'],
+                    userAgentPackageName: 'com.example.runnest',
+                  ),
+                  if (s.routePoints.length > 1)
+                    PolylineLayer(polylines: [
+                      Polyline(
+                        points: s.routePoints,
+                        color: const Color(0x80000000),
+                        strokeWidth: 8,
+                        strokeCap: StrokeCap.round,
+                      ),
+                      Polyline(
+                        points: s.routePoints,
+                        color: CupertinoColors.white,
+                        strokeWidth: 4,
+                        strokeCap: StrokeCap.round,
+                      ),
+                    ]),
+                  MarkerLayer(markers: [
+                    if (s.routePoints.isNotEmpty) ...[
+                      Marker(
+                        point: s.routePoints.first,
+                        width: 14, height: 14,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: CupertinoColors.white,
+                            border: Border.all(
+                                color: const Color(0x80000000),
+                                width: 1.5),
+                          ),
+                        ),
+                      ),
+                      Marker(
+                        point: s.routePoints.last,
+                        width: 14, height: 14,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFFAAAAAA),
+                            border: Border.all(
+                                color: const Color(0x80000000),
+                                width: 1.5),
+                          ),
+                        ),
+                      ),
+                    ],
                   ]),
-                MarkerLayer(markers: [
-                  if (s.routePoints.isNotEmpty) ...[
-                    Marker(
-                      point: s.routePoints.first,
-                      width: 14, height: 14,
+                ],
+              )
+                  : Container(
+                  color: const Color(0xFF141414),
+                  child: const Center(
+                      child: AppIcon(Ic.map, size: 40,
+                          color: Color(0xFF3A3A3C)))),
+            ),
+
+            // Top gradient
+            Positioned(
+              top: 0, left: 0, right: 0,
+              height: topPad + 70,
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xCC000000), Color(0x00000000)],
+                  ),
+                ),
+              ),
+            ),
+
+            // Bottom fade
+            Positioned(
+              bottom: 0, left: 0, right: 0, height: 70,
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [Color(0xFF080808), Color(0x00000000)],
+                  ),
+                ),
+              ),
+            ),
+
+            // Nav
+            Positioned(
+              top: topPad, left: 0, right: 0,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: _goHome,
                       child: Container(
+                        width: 38, height: 38,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Colors.white,
+                          color: const Color(0xCC000000),
                           border: Border.all(
-                              color: Colors.black54, width: 1.5),
+                              color: const Color(0xFF3A3A3C), width: 0.5),
                         ),
+                        child: const Center(
+                            child: AppIcon(Ic.back, size: 20,
+                                color: CupertinoColors.white)),
                       ),
                     ),
-                    Marker(
-                      point: s.routePoints.last,
-                      width: 14, height: 14,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.grey.shade400,
-                          border: Border.all(
-                              color: Colors.black54, width: 1.5),
-                        ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xCC000000),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: const Color(0xFF2C2C2E), width: 0.5),
                       ),
+                      child: const Text('RUNNE\$T',
+                          style: TextStyle(
+                              color: CupertinoColors.white,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2,
+                              fontSize: 13,
+                              decoration: TextDecoration.none)),
                     ),
+                    const SizedBox(width: 38),
                   ],
-                ]),
-              ],
-            )
-                : Container(
-                color: const Color(0xFF141414),
-                child: const Center(
-                    child: Text('No route recorded',
-                        style: TextStyle(color: Colors.white24)))),
-          ),
+                ),
+              ),
+            ),
+          ]),
         ),
 
-        SliverPadding(
-          padding: const EdgeInsets.all(24),
-          sliver: SliverList(
-            delegate: SliverChildListDelegate([
-              Row(children: [
-                const Text('🎉', style: TextStyle(fontSize: 24)),
-                const SizedBox(width: 10),
-                const Text('Run Complete!',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800)),
-              ]),
-              const SizedBox(height: 6),
-              Text(_fmtDate(s.startTime),
-                  style: const TextStyle(color: Colors.white24, fontSize: 12)),
-              const SizedBox(height: 24),
+        // ── Scrollable content ────────────────────────────────────
+        Expanded(
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics()),
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    // Header
+                    Row(children: [
+                      const Text('🎉',
+                          style: TextStyle(fontSize: 26,
+                              decoration: TextDecoration.none)),
+                      const SizedBox(width: 10),
+                      const Text('Run Complete!',
+                          style: TextStyle(
+                              color: CupertinoColors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              decoration: TextDecoration.none)),
+                    ]),
+                    const SizedBox(height: 4),
+                    Text(_fmtDate(s.startTime),
+                        style: const TextStyle(
+                            color: Color(0xFF3A3A3C),
+                            fontSize: 12,
+                            decoration: TextDecoration.none)),
+                    const SizedBox(height: 22),
 
-              // Stats grid
-              GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.6,
-                children: [
-                  _card('Distance', '${s.formattedDistance} km',
-                      Icons.straighten),
-                  _card('Time', s.formattedTime, Icons.timer_outlined),
-                  _card('Avg Pace', '${s.formattedPace} /km',
-                      Icons.speed_outlined),
-                  _card('Calories', s.estimatedCalories,
-                      Icons.local_fire_department_outlined),
-                  _card('Steps', s.steps > 0 ? s.formattedSteps : '--',
-                      Icons.directions_walk_outlined),
-                  _card('Cadence', s.formattedCadence,
-                      Icons.av_timer_outlined),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Show photo only if one was taken during the run
-              if (s.photoPath != null) _photoSection(s),
-
-              const SizedBox(height: 32),
-
-              // Done button
-              GestureDetector(
-                onTap: _goHome,
-                child: Container(
-                  height: 58,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(29),
-                    gradient: const LinearGradient(
-                      colors: [Colors.white, Color(0xFFBBBBBB)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                    // Stats grid
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 1.65,
+                      children: [
+                        _card('Distance',
+                            '${s.formattedDistance} km', Ic.distance),
+                        _card('Time', s.formattedTime, Ic.timer),
+                        _card('Avg Pace',
+                            '${s.formattedPace} /km', Ic.pace),
+                        _card('Calories', s.estimatedCalories, Ic.fire),
+                        _card('Steps',
+                            s.steps > 0 ? s.formattedSteps : '--',
+                            Ic.steps),
+                        _card('Cadence', s.formattedCadence, Ic.cadence),
+                      ],
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                          color: Colors.white.withOpacity(0.2),
-                          blurRadius: 20,
-                          spreadRadius: 2)
+                    const SizedBox(height: 22),
+
+                    if (s.photoPath != null) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Run Photo',
+                              style: TextStyle(
+                                  color: CupertinoColors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                  decoration: TextDecoration.none)),
+                          GestureDetector(
+                            onTap: () => _sharePhoto(s.photoPath!),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1C1C1E),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: const Color(0xFF2C2C2E),
+                                    width: 0.5),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text('⬆',
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          color: CupertinoColors.white,
+                                          decoration: TextDecoration.none)),
+                                  SizedBox(width: 6),
+                                  Text('Share',
+                                      style: TextStyle(
+                                          color: CupertinoColors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          decoration: TextDecoration.none)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Image.file(File(s.photoPath!),
+                            width: double.infinity, fit: BoxFit.cover),
+                      ),
+                      const SizedBox(height: 8),
+                      // Full-width share button below image
+                      GestureDetector(
+                        onTap: () => _sharePhoto(s.photoPath!),
+                        child: Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1C1C1E),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                                color: const Color(0xFF2C2C2E), width: 0.5),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text('⬆',
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      color: CupertinoColors.white,
+                                      decoration: TextDecoration.none)),
+                              SizedBox(width: 8),
+                              Text('Share Run Photo',
+                                  style: TextStyle(
+                                      color: CupertinoColors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.2,
+                                      decoration: TextDecoration.none)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
                     ],
-                  ),
-                  child: const Center(
-                    child: Text('DONE',
-                        style: TextStyle(
-                            color: Colors.black,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
-                            letterSpacing: 4)),
-                  ),
+
+                    // Done
+                    GestureDetector(
+                      onTap: _goHome,
+                      child: Container(
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: CupertinoColors.white,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: [
+                            BoxShadow(
+                                color:
+                                CupertinoColors.white.withOpacity(0.15),
+                                blurRadius: 24,
+                                spreadRadius: 2),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Text('DONE',
+                              style: TextStyle(
+                                  color: CupertinoColors.black,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 15,
+                                  letterSpacing: 4,
+                                  decoration: TextDecoration.none)),
+                        ),
+                      ),
+                    ),
+                  ]),
                 ),
               ),
-              const SizedBox(height: 32),
-            ]),
+            ],
           ),
         ),
       ]),
     );
   }
 
-  Widget _card(String label, String value, IconData icon) => Container(
-    padding: const EdgeInsets.all(16),
+  Widget _card(String label, String value, String glyph) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
     decoration: BoxDecoration(
-      color: const Color(0xFF111111),
+      color: const Color(0xFF1C1C1E),
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: Colors.white.withOpacity(0.07)),
+      border: Border.all(color: const Color(0xFF2C2C2E), width: 0.5),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Icon(icon, color: Colors.white54, size: 20),
+        Container(
+          width: 32, height: 32,
+          decoration: BoxDecoration(
+            color: const Color(0xFF2C2C2E),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+              child: AppIcon(glyph, size: 16,
+                  color: const Color(0xFF8E8E93))),
+        ),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
+                  color: CupertinoColors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3,
+                  decoration: TextDecoration.none)),
+          const SizedBox(height: 2),
           Text(label,
-              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+              style: const TextStyle(
+                  color: Color(0xFF636366),
+                  fontSize: 11,
+                  decoration: TextDecoration.none)),
         ]),
       ],
     ),
   );
 
-  Widget _photoSection(RunSession s) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('Run Photo',
-          style: TextStyle(
-              color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
-      const SizedBox(height: 12),
-      ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: Image.file(File(s.photoPath!),
-            width: double.infinity, fit: BoxFit.cover),
-      ),
-      const SizedBox(height: 8),
-      const Text('Stats & route overlaid on photo',
-          style: TextStyle(color: Colors.white24, fontSize: 11)),
-      const SizedBox(height: 24),
-    ]);
-  }
-
   String _fmtDate(DateTime dt) {
     const m = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
     ];
-    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  •  '
+    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  ·  '
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

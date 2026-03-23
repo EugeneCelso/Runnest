@@ -1,14 +1,13 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/run_sessions.dart';
 import '../providers/sessions_provider.dart';
 import 'run_detail_screen.dart';
+import 'ios_icons.dart';
 
-// Keep the same constructor so home_screen.dart still passes sessions/onDelete
-// but now HistoryScreen also watches the provider directly for live updates
 class HistoryScreen extends ConsumerWidget {
   final List<RunSession> sessions;
   final Function(String id) onDelete;
@@ -18,81 +17,98 @@ class HistoryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Watch provider so deleting a run auto-refreshes without calling _load()
-    final sessionsAsync = ref.watch(sessionsProvider);
-    final liveList = sessionsAsync.maybeWhen(
-      data: (list) => list,
-      orElse: () => sessions, // fallback to prop while loading
+    final liveList = ref.watch(sessionsProvider).maybeWhen(
+      data: (l) => l,
+      orElse: () => sessions,
     );
 
-    return SafeArea(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 8),
-          child: ShaderMask(
-            shaderCallback: (bounds) => const LinearGradient(
-              colors: [Colors.white, Color(0xFFAAAAAA)],
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics()),
+      slivers: [
+        CupertinoSliverNavigationBar(
+          backgroundColor: const Color(0xFF080808),
+          border: const Border(),
+          largeTitle: ShaderMask(
+            shaderCallback: (b) => const LinearGradient(
+              colors: [CupertinoColors.white, Color(0xFF8E8E93)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-            ).createShader(bounds),
+            ).createShader(b),
             child: const Text('My Runs',
                 style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
+                    color: CupertinoColors.white,
                     fontWeight: FontWeight.w800)),
           ),
         ),
+
         if (liveList.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-            child: Text(
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            sliver: SliverToBoxAdapter(
+              child: Text(
                 '${liveList.length} run${liveList.length == 1 ? '' : 's'} recorded',
-                style:
-                const TextStyle(color: Colors.white24, fontSize: 13)),
+                style: const TextStyle(
+                    color: Color(0xFF3A3A3C),
+                    fontSize: 13,
+                    decoration: TextDecoration.none),
+              ),
+            ),
           ),
+
         if (liveList.isEmpty)
-          Expanded(
+          SliverFillRemaining(
             child: Center(
               child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      width: 80,
-                      height: 80,
+                      width: 76,
+                      height: 76,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: const Color(0xFF111111),
-                        border: Border.all(color: Colors.white12),
+                        color: const Color(0xFF1C1C1E),
+                        border: Border.all(
+                            color: const Color(0xFF2C2C2E), width: 0.5),
                       ),
-                      child: const Icon(Icons.directions_run,
-                          color: Colors.white12, size: 36),
+                      child: const Center(
+                          child: AppIcon(Ic.run, size: 30,
+                              color: Color(0xFF3A3A3C))),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 18),
                     const Text('No runs yet',
                         style: TextStyle(
-                            color: Colors.white38,
+                            color: Color(0xFF636366),
                             fontSize: 18,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none)),
+                    const SizedBox(height: 6),
                     const Text('Complete a run to see it here',
                         style: TextStyle(
-                            color: Colors.white12, fontSize: 13)),
+                            color: Color(0xFF3A3A3C),
+                            fontSize: 13,
+                            decoration: TextDecoration.none)),
                   ]),
             ),
           )
         else
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: liveList.length,
-              itemBuilder: (_, i) => _RunCard(session: liveList[i]),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                    (_, i) => _RunCard(session: liveList[i]),
+                childCount: liveList.length,
+              ),
             ),
           ),
-      ]),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+      ],
     );
   }
 }
 
+// ── Run card ─────────────────────────────────────────────────────
 class _RunCard extends ConsumerWidget {
   final RunSession session;
   const _RunCard({required this.session});
@@ -110,281 +126,299 @@ class _RunCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = session;
     return GestureDetector(
-      onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => RunDetailScreen(session: s))),
+      onTap: () => Navigator.push(context,
+          CupertinoPageRoute(builder: (_) => RunDetailScreen(session: s))),
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-          color: const Color(0xFF111111),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: Colors.white.withOpacity(0.07)),
+          color: const Color(0xFF1C1C1E),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0xFF2C2C2E), width: 0.5),
         ),
-        child:
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Map preview
-          ClipRRect(
-            borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(22)),
-            child: Stack(children: [
-              SizedBox(
-                height: 160,
-                child: s.routePoints.isNotEmpty
-                    ? FlutterMap(
-                  options: MapOptions(
-                    initialCenter: _center,
-                    initialZoom: 14,
-                    interactionOptions: const InteractionOptions(
-                        flags: InteractiveFlag.none),
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate:
-                      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                      subdomains: const ['a', 'b', 'c', 'd'],
-                      userAgentPackageName: 'com.example.runnest',
-                    ),
-                    if (s.routePoints.length > 1)
-                      PolylineLayer(polylines: [
-                        Polyline(
-                            points: s.routePoints,
-                            color: Colors.black.withOpacity(0.5),
-                            strokeWidth: 8,
-                            strokeCap: StrokeCap.round),
-                        Polyline(
-                            points: s.routePoints,
-                            color: Colors.white,
-                            strokeWidth: 3.5,
-                            strokeCap: StrokeCap.round),
-                      ]),
-                    MarkerLayer(markers: [
-                      if (s.routePoints.isNotEmpty) ...[
-                        Marker(
-                            point: s.routePoints.first,
-                            width: 12,
-                            height: 12,
-                            child: Container(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Map ───────────────────────────────────────────────
+              ClipRRect(
+                borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(24)),
+                child: Stack(children: [
+                  SizedBox(
+                    height: 155,
+                    child: s.routePoints.isNotEmpty
+                        ? FlutterMap(
+                      options: MapOptions(
+                        initialCenter: _center,
+                        initialZoom: 14,
+                        interactionOptions: const InteractionOptions(
+                            flags: InteractiveFlag.none),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                          'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                          subdomains: const ['a', 'b', 'c', 'd'],
+                          userAgentPackageName: 'com.example.runnest',
+                        ),
+                        if (s.routePoints.length > 1)
+                          PolylineLayer(polylines: [
+                            Polyline(
+                                points: s.routePoints,
+                                color: const Color(0x80000000),
+                                strokeWidth: 8,
+                                strokeCap: StrokeCap.round),
+                            Polyline(
+                                points: s.routePoints,
+                                color: CupertinoColors.white,
+                                strokeWidth: 3.5,
+                                strokeCap: StrokeCap.round),
+                          ]),
+                        MarkerLayer(markers: [
+                          if (s.routePoints.isNotEmpty) ...[
+                            Marker(
+                              point: s.routePoints.first,
+                              width: 12, height: 12,
+                              child: Container(
                                 decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.white,
-                                    border: Border.all(
-                                        color: Colors.black38,
-                                        width: 1.5)))),
-                        Marker(
-                            point: s.routePoints.last,
-                            width: 12,
-                            height: 12,
-                            child: Container(
+                                  shape: BoxShape.circle,
+                                  color: CupertinoColors.white,
+                                  border: Border.all(
+                                      color: const Color(0x61000000),
+                                      width: 1.5),
+                                ),
+                              ),
+                            ),
+                            Marker(
+                              point: s.routePoints.last,
+                              width: 12, height: 12,
+                              child: Container(
                                 decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.grey.shade400,
-                                    border: Border.all(
-                                        color: Colors.black38,
-                                        width: 1.5)))),
+                                  shape: BoxShape.circle,
+                                  color: const Color(0xFFAAAAAA),
+                                  border: Border.all(
+                                      color: const Color(0x61000000),
+                                      width: 1.5),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ]),
                       ],
-                    ]),
-                  ],
-                )
-                    : Container(
-                    color: const Color(0xFF181818),
-                    child: const Center(
-                        child: Icon(Icons.map_outlined,
-                            color: Colors.white12, size: 40))),
-              ),
-              Positioned(
-                top: 10,
-                right: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.65),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white12),
+                    )
+                        : Container(
+                        color: const Color(0xFF2C2C2E),
+                        child: const Center(
+                            child: AppIcon(Ic.map, size: 36,
+                                color: Color(0xFF3A3A3C)))),
                   ),
-                  child: const Row(children: [
-                    Icon(Icons.open_in_new,
-                        color: Colors.white38, size: 11),
-                    SizedBox(width: 4),
-                    Text('Details',
-                        style: TextStyle(
-                            color: Colors.white38, fontSize: 11)),
-                  ]),
-                ),
+                  // Details pill
+                  Positioned(
+                    top: 10, right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xA6000000),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: const Color(0xFF2C2C2E), width: 0.5),
+                      ),
+                      child: Row(children: const [
+                        AppIcon(Ic.detail, size: 11,
+                            color: Color(0xFF636366)),
+                        SizedBox(width: 4),
+                        Text('Details',
+                            style: TextStyle(
+                                color: Color(0xFF636366),
+                                fontSize: 11,
+                                decoration: TextDecoration.none)),
+                      ]),
+                    ),
+                  ),
+                ]),
               ),
-            ]),
-          ),
 
-          // Photo thumbnail
-          if (s.photoPath != null)
-            Stack(children: [
-              Container(
-                height: 100,
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                      image: FileImage(File(s.photoPath!)),
-                      fit: BoxFit.cover),
-                ),
-              ),
-              Positioned(
-                bottom: 6,
-                left: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.65),
-                      borderRadius: BorderRadius.circular(10)),
-                  child: const Row(children: [
-                    Icon(Icons.photo_camera,
-                        color: Colors.white38, size: 11),
-                    SizedBox(width: 4),
-                    Text('Run photo',
-                        style: TextStyle(
-                            color: Colors.white38, fontSize: 10)),
-                  ]),
-                ),
-              ),
-            ]),
+              // ── Photo ─────────────────────────────────────────────
+              if (s.photoPath != null)
+                Stack(children: [
+                  Container(
+                    height: 96,
+                    decoration: BoxDecoration(
+                      image: DecorationImage(
+                          image: FileImage(File(s.photoPath!)),
+                          fit: BoxFit.cover),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 6, left: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                          color: const Color(0xA6000000),
+                          borderRadius: BorderRadius.circular(10)),
+                      child: Row(children: const [
+                        AppIcon(Ic.camera, size: 10,
+                            color: Color(0xFF636366)),
+                        SizedBox(width: 4),
+                        Text('Run photo',
+                            style: TextStyle(
+                                color: Color(0xFF636366),
+                                fontSize: 10,
+                                decoration: TextDecoration.none)),
+                      ]),
+                    ),
+                  ),
+                ]),
 
-          // Stats
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_fmtDate(s.startTime),
-                      style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 11,
-                          letterSpacing: 0.4)),
-                  const SizedBox(height: 14),
-                  Row(children: [
-                    _stat('${s.formattedDistance} km', 'Distance'),
-                    _stat(s.formattedTime, 'Time'),
-                    _stat('${s.formattedPace} /km', 'Pace'),
-                    _stat(s.estimatedCalories, 'Cal'),
-                  ]),
-                  if (s.steps > 0) ...[
-                    const SizedBox(height: 10),
-                    Container(
-                        height: 1,
-                        color: Colors.white.withOpacity(0.05)),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      _stat(s.formattedSteps, 'Steps'),
-                      _stat(s.formattedCadence, 'Cadence'),
-                      _stat('', ''),
-                      _stat('', ''),
-                    ]),
-                  ],
-                  const SizedBox(height: 14),
-                  Row(children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    RunDetailScreen(session: s))),
-                        child: Container(
-                          height: 40,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            gradient: const LinearGradient(
-                              colors: [
-                                Colors.white,
-                                Color(0xFFBBBBBB)
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
+              // ── Stats ─────────────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_fmtDate(s.startTime),
+                          style: const TextStyle(
+                              color: Color(0xFF636366),
+                              fontSize: 11,
+                              letterSpacing: 0.3,
+                              decoration: TextDecoration.none)),
+                      const SizedBox(height: 12),
+                      // Primary stats
+                      Row(children: [
+                        _statCol('${s.formattedDistance}', 'km', 'Distance'),
+                        _statCol(s.formattedTime, '', 'Time'),
+                        _statCol(s.formattedPace, '/km', 'Pace'),
+                        _statCol(
+                            (s.distanceKm * 62).round().toString(), 'kcal', 'Cal'),
+                      ]),
+                      if (s.steps > 0) ...[
+                        const SizedBox(height: 10),
+                        Container(height: 0.5, color: const Color(0xFF2C2C2E)),
+                        const SizedBox(height: 10),
+                        Row(children: [
+                          _statCol(s.formattedSteps, '', 'Steps'),
+                          _statCol(s.formattedCadence, '', 'Cadence'),
+                          const Expanded(child: SizedBox()),
+                          const Expanded(child: SizedBox()),
+                        ]),
+                      ],
+                      const SizedBox(height: 14),
+                      // Buttons
+                      Row(children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => Navigator.push(
+                                context,
+                                CupertinoPageRoute(
+                                    builder: (_) =>
+                                        RunDetailScreen(session: s))),
+                            child: Container(
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: CupertinoColors.white,
+                                borderRadius: BorderRadius.circular(21),
+                              ),
+                              child: const Center(
+                                child: Text('View Details',
+                                    style: TextStyle(
+                                        color: CupertinoColors.black,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                        letterSpacing: 0.3,
+                                        decoration: TextDecoration.none)),
+                              ),
                             ),
                           ),
-                          child: const Center(
-                            child: Text('View Details',
-                                style: TextStyle(
-                                    color: Colors.black,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 13,
-                                    letterSpacing: 0.5)),
+                        ),
+                        const SizedBox(width: 10),
+                        GestureDetector(
+                          onTap: () => _confirmDelete(context, ref),
+                          child: Container(
+                            width: 42, height: 42,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFF2C2C2E),
+                              border: Border.all(
+                                  color: const Color(0xFF3A3A3C), width: 0.5),
+                            ),
+                            child: const Center(
+                                child: AppIcon(Ic.trash, size: 16,
+                                    color: Color(0xFF636366))),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    GestureDetector(
-                      onTap: () => _confirmDelete(context, ref),
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white.withOpacity(0.05),
-                          border: Border.all(
-                              color: Colors.white.withOpacity(0.15)),
-                        ),
-                        child: const Icon(Icons.delete_outline,
-                            color: Colors.white38, size: 18),
-                      ),
-                    ),
-                  ]),
-                ]),
-          ),
-        ]),
+                      ]),
+                    ]),
+              ),
+            ]),
       ),
     );
   }
 
-  Widget _stat(String value, String label) => Expanded(
+  Widget _statCol(String value, String unit, String label) => Expanded(
     child: Column(children: [
-      Text(value,
-          style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 13)),
-      const SizedBox(height: 2),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(value,
+              style: const TextStyle(
+                  color: CupertinoColors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                  letterSpacing: -0.3,
+                  decoration: TextDecoration.none)),
+          if (unit.isNotEmpty) ...[
+            const SizedBox(width: 2),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(unit,
+                  style: const TextStyle(
+                      color: Color(0xFF636366),
+                      fontSize: 10,
+                      decoration: TextDecoration.none)),
+            ),
+          ],
+        ],
+      ),
+      const SizedBox(height: 3),
       Text(label,
           style: const TextStyle(
-              color: Colors.white24, fontSize: 10)),
+              color: Color(0xFF636366),
+              fontSize: 11,
+              decoration: TextDecoration.none)),
     ]),
   );
 
-  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
-    final ok = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22)),
-          title: const Text('Delete Run?',
-              style: TextStyle(color: Colors.white)),
-          content: const Text('This cannot be undone.',
-              style: TextStyle(color: Colors.white54)),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel',
-                    style: TextStyle(color: Colors.white38))),
-            TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Delete',
-                    style: TextStyle(
-                        color: Colors.white54,
-                        fontWeight: FontWeight.bold))),
-          ],
-        ));
-    if (ok == true) {
-      ref.read(sessionsProvider.notifier).deleteSession(session.id);
-    }
+  Future<void> _confirmDelete(BuildContext ctx, WidgetRef ref) async {
+    await showCupertinoModalPopup<void>(
+      context: ctx,
+      builder: (_) => CupertinoActionSheet(
+        title: const Text('Delete Run?'),
+        message: const Text('This cannot be undone.'),
+        actions: [
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.pop(ctx);
+              ref.read(sessionsProvider.notifier).deleteSession(session.id);
+            },
+            child: const Text('Delete Run'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
   }
 
   String _fmtDate(DateTime dt) {
     const m = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
     ];
-    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  •  '
+    return '${m[dt.month - 1]} ${dt.day}, ${dt.year}  ·  '
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

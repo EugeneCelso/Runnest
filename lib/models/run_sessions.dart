@@ -48,14 +48,12 @@ class RunSession {
     return '$steps';
   }
 
-  // Steps per minute — used in history cards and summary screen
   String get formattedCadence {
     if (elapsed.inSeconds < 10 || steps == 0) return '--';
     final spm = (steps / (elapsed.inSeconds / 60)).round();
     return '$spm spm';
   }
 
-  // Average speed in km/h — used in run detail screen
   String get formattedAvgSpeed {
     if (elapsed.inSeconds == 0) return '0.0 km/h';
     final kmh = distanceKm / (elapsed.inSeconds / 3600);
@@ -79,8 +77,7 @@ class RunSession {
   factory RunSession.fromJson(Map<String, dynamic> j) => RunSession(
     id: j['id'],
     startTime: DateTime.parse(j['startTime']),
-    endTime:
-    j['endTime'] != null ? DateTime.parse(j['endTime']) : null,
+    endTime: j['endTime'] != null ? DateTime.parse(j['endTime']) : null,
     distanceKm: (j['distanceKm'] as num).toDouble(),
     elapsed: Duration(seconds: j['elapsedSeconds'] as int),
     pacePerKm: (j['pacePerKm'] as num).toDouble(),

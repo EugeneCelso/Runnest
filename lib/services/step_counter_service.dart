@@ -11,13 +11,11 @@ class StepCounterService {
 
   Stream<int> get stepStream => _stepCtrl.stream;
 
-  // Peak detection state
   double _lastMagnitude = 0;
-  double _threshold = 11.5;
+  final double _threshold = 11.5;
   bool _peakDetected = false;
   DateTime? _lastStepTime;
 
-  // Smoothing buffer
   final List<double> _buffer = [];
   static const int _bufferSize = 5;
 
@@ -32,16 +30,15 @@ class StepCounterService {
   void _onAccelerometer(AccelerometerEvent e) {
     final magnitude = sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
 
-    // Smooth with moving average
     _buffer.add(magnitude);
     if (_buffer.length > _bufferSize) _buffer.removeAt(0);
     final smoothed = _buffer.reduce((a, b) => a + b) / _buffer.length;
 
     final now = DateTime.now();
 
-    // Step detection: rising edge cross of threshold
-    if (_lastMagnitude < _threshold && smoothed >= _threshold && !_peakDetected) {
-      // Debounce — min 250ms between steps (~max 4 steps/sec, realistic for sprinting)
+    if (_lastMagnitude < _threshold &&
+        smoothed >= _threshold &&
+        !_peakDetected) {
       if (_lastStepTime == null ||
           now.difference(_lastStepTime!).inMilliseconds >= 250) {
         _totalSteps++;
